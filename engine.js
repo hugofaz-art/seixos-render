@@ -67,9 +67,16 @@ function render(hash, genome, h, aspect=1.294){
   const prevLog = console.log;
   global.console.log = (m)=>{ if(m==='done') done=true; };
   try { FN(); } catch(e){ /* progressive path schedules rAF; ignore sync throw */ }
-  // drain the rAF queue iteratively until the render completes
+  // drain the rAF queue iteratively until the render completes.
+  // The on-chain grain pass churns through large transient arrays; force GC periodically (needs node --expose-gc)
+  // so peak RSS stays well under the instance limit instead of letting V8 grow lazily and get OOM-killed.
   let guard=0;
-  while(RAF.length && !done && guard++ < 2_000_000){ const cb=RAF.shift(); try{ cb(performance.now()); }catch(e){ global.console.log=prevLog; throw e; } }
+  while(RAF.length && !done && guard++ < 2_000_000){
+    const cb=RAF.shift();
+    try{ cb(performance.now()); }catch(e){ global.console.log=prevLog; throw e; }
+    if(global.gc && (guard & 127)===0) global.gc();
+  }
+  if(global.gc) global.gc();
   global.console.log = prevLog;
   const cv = MAIN || allCanvases[allCanvases.length-1];
   return { canvas: cv, traits: window.__TRAITS__, done, frames: guard, w: cv&&cv.width, hgt: cv&&cv.height };
