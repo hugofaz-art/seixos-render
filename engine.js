@@ -7,7 +7,7 @@ const RAW = fs.readFileSync(__dirname + '/pebbles_script.js', 'utf8');
 function patch(s){
   s = s.replace(/^let hash='[^']*'/, "let hash=window.__SEED__");
   s = s.replace(",d=1.294,", ",d=window.__ASPECT__,");
-  s = s.replace('t.get("render_static")', '"false"');                         // progressive (rAF) path — we drain it synchronously
+  s = s.replace('t.get("render_static")', '"true"');                          // STATIC synchronous render — no per-frame rAF accumulation (no watchdog server-side). Avoids the progressive-mode memory leak.
   s = s.replace('l&&M.putImageData(W,0,0),console.log("done")', 'M.putImageData(W,0,0),console.log("done")');
   s = s.replace('t.get("height")', 'String(window.__H__||0)');
   s = s.replace("function o(){return i^=i<<13,i^=i>>17,i^=i<<5,(i<0?1+~i:i)%1e3/1e3}",
