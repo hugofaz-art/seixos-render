@@ -46,7 +46,7 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/health' || u.pathname === '/') return json(res, 200, { ok:true, service:'seixos-render', defaultH:DEFAULT_H });
 
   if (u.pathname === '/img/' || u.pathname.startsWith('/img/')) {
-    const key = u.pathname.slice('/img/'.length).replace(/[^a-f0-9.]/g,'');
+    const key = u.pathname.slice('/img/'.length).replace(/[^a-z0-9.]/g,'');   // keep hex key + the .jpg extension (j/p/g aren't hex!)
     const p = path.join(STORE, key);
     if (!fs.existsSync(p)) { res.writeHead(404); return res.end('not found'); }
     cors(res); res.writeHead(200, {'content-type':'image/jpeg','cache-control':'public, max-age=604800'});
