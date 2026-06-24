@@ -29,20 +29,20 @@ global.DOMPoint = napi.DOMPoint;
 global.ImageData= napi.ImageData;
 global.Image    = napi.Image;
 
-let RAF=[]; let MAIN=null; const allCanvases=[];
+let RAF=[]; let MAIN=null; let lastCanvas=null;   // do NOT retain every canvas — the algorithm makes many transient pattern canvases per frame; holding them leaks GBs. Keep only the main (appended) canvas + the most recent as fallback.
 global.requestAnimationFrame = (cb)=>{ RAF.push(cb); return RAF.length; };
 global.cancelAnimationFrame = ()=>{};
 
 global.document = {
   location: { search: '' },
   createElement(tag){
-    if(String(tag).toLowerCase()==='canvas'){ const c=napi.createCanvas(300,150); allCanvases.push(c); return c; }
+    if(String(tag).toLowerCase()==='canvas'){ const c=napi.createCanvas(300,150); lastCanvas=c; return c; }
     return makeStubEl();
   },
   createElementNS(){ return makeStubEl(); },
   body: { appendChild(n){ if(n && typeof n.getContext==='function') MAIN=n; }, style:{}, },
   head: { appendChild(){} },
-  querySelector(sel){ return MAIN || allCanvases[allCanvases.length-1] || null; },
+  querySelector(sel){ return MAIN || lastCanvas || null; },
   querySelectorAll(){ return []; },
   getElementById(){ return null; },
   addEventListener(){}, removeEventListener(){},
@@ -58,7 +58,7 @@ const FN = new Function(PATCHED);   // compiled once
 // async: yields to the event loop periodically so a long render never blocks the server (health checks keep passing)
 // and forced GC can run, keeping peak RSS down. Logs rss to stderr for diagnosis.
 async function render(hash, genome, h, aspect=1.294){
-  RAF = []; MAIN = null; allCanvases.length = 0;
+  RAF = []; MAIN = null; lastCanvas = null;
   window.__SEED__ = hash;
   window.__FORCED__ = genome;
   window.__ASPECT__ = aspect;
@@ -84,7 +84,7 @@ async function render(hash, genome, h, aspect=1.294){
   }
   if(global.gc) global.gc();
   global.console.log = prevLog;
-  const cv = MAIN || allCanvases[allCanvases.length-1];
+  const cv = MAIN || lastCanvas;
   elog('FINISH frames='+guard+' done='+done+' canvas='+(cv&&(cv.width+'x'+cv.height))+' rss(MB)='+Math.round(process.memoryUsage().rss/1048576)+' ms='+(Date.now()-t0));
   return { canvas: cv, traits: window.__TRAITS__, done, frames: guard, w: cv&&cv.width, hgt: cv&&cv.height };
 }
