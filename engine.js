@@ -79,7 +79,7 @@ async function render(hash, genome, h, aspect=1.294){
     if((guard & 63)===0){
       if(global.gc) global.gc();
       await new Promise(r=>setImmediate(r));               // yield: keep event loop responsive + let GC reclaim
-      if((guard & 16383)===0) elog('frame='+guard+' rss(MB)='+Math.round(process.memoryUsage().rss/1048576)+' done='+done+' ms='+(Date.now()-t0));
+      elog('frame='+guard+' rss(MB)='+Math.round(process.memoryUsage().rss/1048576)+' done='+done+' ms='+(Date.now()-t0));  // DIAG: every 64 frames
     }
   }
   if(global.gc) global.gc();
