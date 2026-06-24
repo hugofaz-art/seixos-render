@@ -1,0 +1,10 @@
+{
+  "name": "seixos-render",
+  "version": "1.0.0",
+  "private": true,
+  "description": "High-resolution server renderer for the on-chain Pebbles algorithm (Casa NUA / Seixos).",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "@napi-rs/canvas": "^0.1.58" }
+}

@@ -1,0 +1,11 @@
+# Render Blueprint. 4K (RENDER_H=3840) fits a small instance; 8K (RENDER_H=7680) needs ~2GB (plan: standard).
+services:
+  - type: web
+    name: seixos-render
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: RENDER_H
+        value: "3840"
