@@ -31,7 +31,7 @@ function readBody(req){ return new Promise((resolve)=>{ let b=''; req.on('data',
 async function renderToFile(hash, genome, h){
   const H = Math.max(200, Math.min(parseInt(h || DEFAULT_H, 10), MAX_H));
   const t0 = Date.now();
-  const r = render(hash, genome, H);
+  const r = await render(hash, genome, H);
   if (!r.canvas) throw new Error('render produced no canvas');
   const buf = await r.canvas.encode('jpeg', Math.round(QUALITY*100));
   const key = crypto.randomBytes(8).toString('hex') + '.jpg';
@@ -56,9 +56,10 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/render' && req.method === 'POST') {
     try { const b = await readBody(req);
       if (!b.hash || !b.genome) return json(res, 400, { error:'hash and genome required' });
+      process.stderr.write('[req] /render h='+(b.h||DEFAULT_H)+'\n');
       const out = await renderToFile(b.hash, b.genome, b.h);
       return json(res, 200, { url: imgUrl(req, out.key), key: out.key, traits: out.traits, w: out.w, h: out.h, ms: out.ms });
-    } catch (e) { return json(res, 500, { error: String(e && e.message || e) }); }
+    } catch (e) { process.stderr.write('[req] /render ERROR '+String(e&&e.stack||e)+'\n'); return json(res, 500, { error: String(e && e.message || e) }); }
   }
 
   if (u.pathname === '/email' && req.method === 'POST') {

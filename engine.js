@@ -55,7 +55,9 @@ global.devicePixelRatio = 1;
 const FN = new Function(PATCHED);   // compiled once
 
 // Render one pebble. genome = {1:..,2:..,...}; hash = '0x...'; h = target height px.
-function render(hash, genome, h, aspect=1.294){
+// async: yields to the event loop periodically so a long render never blocks the server (health checks keep passing)
+// and forced GC can run, keeping peak RSS down. Logs rss to stderr for diagnosis.
+async function render(hash, genome, h, aspect=1.294){
   RAF = []; MAIN = null; allCanvases.length = 0;
   window.__SEED__ = hash;
   window.__FORCED__ = genome;
@@ -65,20 +67,25 @@ function render(hash, genome, h, aspect=1.294){
   window.__TRAITS__ = null;
   let done = false;
   const prevLog = console.log;
+  const elog = (...a)=>{ try{ process.stderr.write('[engine] '+a.join(' ')+'\n'); }catch(e){} };
   global.console.log = (m)=>{ if(m==='done') done=true; };
+  const t0=Date.now();
+  elog('start h='+h+' rss(MB)='+Math.round(process.memoryUsage().rss/1048576));
   try { FN(); } catch(e){ /* progressive path schedules rAF; ignore sync throw */ }
-  // drain the rAF queue iteratively until the render completes.
-  // The on-chain grain pass churns through large transient arrays; force GC periodically (needs node --expose-gc)
-  // so peak RSS stays well under the instance limit instead of letting V8 grow lazily and get OOM-killed.
   let guard=0;
-  while(RAF.length && !done && guard++ < 2_000_000){
+  while(RAF.length && !done && guard++ < 5_000_000){
     const cb=RAF.shift();
-    try{ cb(performance.now()); }catch(e){ global.console.log=prevLog; throw e; }
-    if(global.gc && (guard & 127)===0) global.gc();
+    try{ cb(performance.now()); }catch(e){ global.console.log=prevLog; elog('THROW '+(e&&e.message)); throw e; }
+    if((guard & 63)===0){
+      if(global.gc) global.gc();
+      await new Promise(r=>setImmediate(r));               // yield: keep event loop responsive + let GC reclaim
+      if((guard & 16383)===0) elog('frame='+guard+' rss(MB)='+Math.round(process.memoryUsage().rss/1048576)+' done='+done+' ms='+(Date.now()-t0));
+    }
   }
   if(global.gc) global.gc();
   global.console.log = prevLog;
   const cv = MAIN || allCanvases[allCanvases.length-1];
+  elog('FINISH frames='+guard+' done='+done+' canvas='+(cv&&(cv.width+'x'+cv.height))+' rss(MB)='+Math.round(process.memoryUsage().rss/1048576)+' ms='+(Date.now()-t0));
   return { canvas: cv, traits: window.__TRAITS__, done, frames: guard, w: cv&&cv.width, hgt: cv&&cv.height };
 }
 module.exports = { render };
