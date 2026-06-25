@@ -107,11 +107,14 @@ body{background:#0c0c0e;color:#ececec;font-family:-apple-system,BlinkMacSystemFo
 .btn:active{opacity:.85}
 .hint{margin-top:11px;font-size:13px;opacity:.6;text-align:center;max-width:520px;line-height:1.5}
 .foot{margin-top:26px;font-size:11.5px;opacity:.5;text-align:center;line-height:1.7}
-a{color:#d8b25a;text-decoration:none}</style></head><body>
+a{color:#d8b25a;text-decoration:none}
+.ig{display:inline-block;margin-top:20px;color:#d8b25a;font-size:14px;font-weight:700;border:1px solid #d8b25a;border-radius:12px;padding:12px 20px;text-decoration:none}
+.ig:active{opacity:.85}</style></head><body>
 <div class="logo">Casa NUA · Domínio Público</div>
 <div class="frame"><div class="prep" id="prep"><div class="spin"></div>Preparando seu Seixo em alta resolução…<br><small style="opacity:.7">isso pode levar um instante</small></div><img id="peb" alt="Seu Seixo"></div>
 <button class="btn" id="save">Salvar nas minhas Fotos</button>
 <div class="hint" id="hint"></div>
+<a class="ig" href="https://instagram.com/nua.casa" target="_blank" rel="noopener">Siga a Casa NUA &nbsp;·&nbsp; <strong>@nua.casa</strong> &nbsp;→</a>
 <div class="foot">SEIXOS (Pebbles)${size?(' · '+size):''} · por Zeblocks · CC0<br>Arte digital descentralizada · <a href="https://6529.io">6529</a></div>
 <script>
 var IMG=${JSON.stringify(img)}, STATUS=${JSON.stringify(status)}, NAME=${JSON.stringify(fileNameFor(key))};
