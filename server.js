@@ -15,6 +15,7 @@ const QUALITY   = parseFloat(process.env.JPEG_QUALITY || '0.92');
 const STORE     = process.env.STORE_DIR || path.join(os.tmpdir(), 'seixos');
 const PUBLIC_URL= (process.env.PUBLIC_URL || '').replace(/\/$/, '');
 const RESEND_KEY= process.env.RESEND_API_KEY || '';
+const ADMIN_TOKEN= process.env.ADMIN_TOKEN || '';                      // protects /visitors export (visitor e-mails = personal data)
 const FROM_EMAIL= process.env.FROM_EMAIL || 'Seixos <onboarding@resend.dev>';
 const TTL_HOURS = parseInt(process.env.TTL_HOURS || '0', 10);          // 0 = keep forever (archive)
 const MAX_CONC  = parseInt(process.env.MAX_CONCURRENT || '1', 10);     // parallel renders (each ~6-9GB at 4K). 1 = safe on 16GB; bump via env if needed.
@@ -22,7 +23,9 @@ const HEAP_MB   = parseInt(process.env.WORKER_HEAP_MB || '7000', 10);  // V8 hea
 
 fs.mkdirSync(STORE, { recursive: true });
 if (TTL_HOURS > 0) setInterval(() => { try { const now = Date.now(), ttl = TTL_HOURS*3600*1000;
-  for (const f of fs.readdirSync(STORE)) { const p = path.join(STORE, f);
+  for (const f of fs.readdirSync(STORE)) {
+    if (f === 'counter.txt' || f[0] === '_') continue;          // NUNCA expira o contador nem os logs privados (_visitors.jsonl)
+    const p = path.join(STORE, f);
     try { if (now - fs.statSync(p).mtimeMs > ttl) fs.unlinkSync(p); } catch (e) {} } } catch (e) {}
 }, 3600 * 1000).unref();
 
@@ -31,8 +34,9 @@ const jobs = new Map();                 // key -> { status:'queued'|'rendering'|
 const queue = []; let active = 0;
 function startJob(key, hash, genome, h){
   const seq = nextSeq();                                 // sequential number for this generated Seixo (used in the filename)
-  jobs.set(key, { status:'queued', ts:Date.now(), seq });
-  queue.push({ key, hash, genome, h, seq }); pump();
+  const createdAt = new Date().toISOString();            // generation timestamp (UTC, ISO 8601)
+  jobs.set(key, { status:'queued', ts:Date.now(), seq, createdAt });
+  queue.push({ key, hash, genome, h, seq, createdAt }); pump();
 }
 function pump(){
   while (active < MAX_CONC && queue.length){
@@ -42,7 +46,7 @@ function pump(){
     let w;
     try {
       w = new Worker(path.join(__dirname,'worker.js'), {
-        workerData:{ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq },
+        workerData:{ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq, createdAt:job.createdAt },
         resourceLimits:{ maxOldGenerationSizeMb: HEAP_MB }   // worker threads reject --expose-gc execArgv; engine's gc() is optional (guarded)
       });
     } catch(e){ const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e); jobs.set(job.key,jj); active--; continue; }
@@ -89,6 +93,8 @@ function fileNameFor(key){
 }
 // persistent sequence counter (STORE/counter.txt). NOTE: STORE defaults to ephemeral /tmp -> resets on redeploy.
 const COUNTER_FILE = path.join(STORE, 'counter.txt');
+// PRIVATE visitor log (e-mails). Starts with '_' so /img can't serve it (sanitize strips '_') and /list ignores it (.jpg only). NÃO exposto publicamente.
+const VISITORS_FILE = path.join(STORE, '_visitors.jsonl');
 let seqCounter = (()=>{ try { return parseInt(fs.readFileSync(COUNTER_FILE,'utf8'),10) || 0; } catch(e){ return 0; } })();
 function nextSeq(){ seqCounter++; try { fs.writeFileSync(COUNTER_FILE, String(seqCounter)); } catch(e){} return seqCounter; }
 
@@ -169,13 +175,25 @@ const server = http.createServer(async (req, res) => {
     catch(e){ res.writeHead(404); return res.end('not found'); }
   }
 
+  if (u.pathname === '/visitors.csv' || u.pathname === '/visitors.jsonl') {   // PROTECTED export of visitor e-mails (token required) — for tabulation/invites
+    if (!ADMIN_TOKEN || u.searchParams.get('token') !== ADMIN_TOKEN) { cors(res); res.writeHead(403); return res.end('forbidden'); }
+    let lines=[]; try { lines = fs.readFileSync(VISITORS_FILE,'utf8').split('\n').filter(Boolean); } catch(e){}
+    if (u.pathname === '/visitors.jsonl') { cors(res); res.writeHead(200,{'content-type':'application/x-ndjson; charset=utf-8'}); return res.end(lines.join('\n')); }
+    const esc = s => '"'+String(s==null?'':s).replace(/"/g,'""')+'"';
+    const rows = ['seq,data_hora_sao_paulo,email,paleta,tamanho,arquivo,key'];
+    for (const ln of lines) { let r; try { r=JSON.parse(ln); } catch(e){ continue; }
+      let dt=''; try { dt = new Date(r.createdAt||r.ts).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}); } catch(e){ dt=r.createdAt||r.ts||''; }
+      rows.push([esc(r.seq), esc(dt), esc(r.email), esc(r.palette), esc(r.size), esc(r.filename), esc(r.key)].join(',')); }
+    cors(res); res.writeHead(200, {'content-type':'text/csv; charset=utf-8'}); return res.end('\ufeff'+rows.join('\n'));
+  }
+
   if (u.pathname === '/list') {                                       // archive listing for the local pull script
     let files = []; try { files = fs.readdirSync(STORE).filter(f => /\.jpg$/.test(f)); } catch(e){}
     if (u.searchParams.get('format') === 'json') {
-      const items = files.map(f => { let mtime=0, traits=null;
+      const items = files.map(f => { let mtime=0, meta={};
         try { mtime = fs.statSync(path.join(STORE,f)).mtimeMs; } catch(e){}
-        try { traits = JSON.parse(fs.readFileSync(path.join(STORE,f+'.json'),'utf8')).traits; } catch(e){}
-        return { key:f, filename: fileNameFor(f), mtime, traits }; }).sort((a,b)=>a.mtime-b.mtime);
+        try { meta = JSON.parse(fs.readFileSync(path.join(STORE,f+'.json'),'utf8')); } catch(e){}
+        return { key:f, filename: fileNameFor(f), seq: meta.seq, createdAt: meta.createdAt, mtime, traits: meta.traits }; }).sort((a,b)=>a.mtime-b.mtime);
       return json(res, 200, { count: items.length, items });
     }
     cors(res); res.writeHead(200, {'content-type':'text/plain; charset=utf-8'}); return res.end(files.join('\n'));
@@ -230,6 +248,12 @@ const server = http.createServer(async (req, res) => {
           html: emailHtml(base, key, traitsFor(key)), attachments: [{ filename: fileNameFor(key), content }] }) });
       const j = await r.json().catch(()=>({}));
       if (!r.ok) { process.stderr.write('[email] resend fail '+JSON.stringify(j)+'\n'); return json(res, 502, { error:'resend failed', detail:j }); }
+      try {                                                            // PRIVATE visitor log (for tabulation / invites) — not exposed publicly
+        let meta={}; try { meta = JSON.parse(fs.readFileSync(path.join(STORE, key+'.json'),'utf8')); } catch(e){}
+        const rec = { ts:new Date().toISOString(), createdAt:meta.createdAt||null, seq:(meta.seq!=null?meta.seq:null), key,
+          email:b.to, palette:(meta.traits&&meta.traits.Palette)||null, size:(meta.traits&&meta.traits.Size)||null, filename:fileNameFor(key) };
+        fs.appendFileSync(VISITORS_FILE, JSON.stringify(rec)+'\n');
+      } catch(e){ process.stderr.write('[visitors] '+String(e)+'\n'); }
       return json(res, 200, { ok:true, key, viewUrl: base+'/view/'+key });
     } catch (e) { process.stderr.write('[email] ERROR '+String(e&&e.stack||e)+'\n'); return json(res, 500, { error: String(e && e.message || e) }); }
   }
