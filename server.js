@@ -131,6 +131,18 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { cors(res); res.writeHead(204); return res.end(); }
   if (u.pathname === '/health' || u.pathname === '/') return json(res, 200, { ok:true, service:'seixos-render', defaultH:DEFAULT_H, active, queued:queue.length });
 
+  if (u.pathname === '/list') {                                       // archive listing for the local pull script
+    let files = []; try { files = fs.readdirSync(STORE).filter(f => /\.jpg$/.test(f)); } catch(e){}
+    if (u.searchParams.get('format') === 'json') {
+      const items = files.map(f => { let mtime=0, traits=null;
+        try { mtime = fs.statSync(path.join(STORE,f)).mtimeMs; } catch(e){}
+        try { traits = JSON.parse(fs.readFileSync(path.join(STORE,f+'.json'),'utf8')).traits; } catch(e){}
+        return { key:f, mtime, traits }; }).sort((a,b)=>a.mtime-b.mtime);
+      return json(res, 200, { count: items.length, items });
+    }
+    cors(res); res.writeHead(200, {'content-type':'text/plain; charset=utf-8'}); return res.end(files.join('\n'));
+  }
+
   if (u.pathname.startsWith('/img/')) {
     const key = sanitize(u.pathname.slice('/img/'.length));
     const p = path.join(STORE, key);
