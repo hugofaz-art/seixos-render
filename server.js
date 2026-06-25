@@ -42,7 +42,7 @@ function pump(){
     try {
       w = new Worker(path.join(__dirname,'worker.js'), {
         workerData:{ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY },
-        execArgv:['--expose-gc'], resourceLimits:{ maxOldGenerationSizeMb: HEAP_MB }
+        resourceLimits:{ maxOldGenerationSizeMb: HEAP_MB }   // worker threads reject --expose-gc execArgv; engine's gc() is optional (guarded)
       });
     } catch(e){ const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e); jobs.set(job.key,jj); active--; continue; }
     w.on('message', m => { const jj = jobs.get(job.key) || {};
