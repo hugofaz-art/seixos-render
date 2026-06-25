@@ -73,10 +73,12 @@ function traitsFor(key){ try { return JSON.parse(fs.readFileSync(path.join(STORE
 // Portuguese palette names. Others (Unigrids, Beatboxes, Sgt. Pepe, Blueprint, summer.jpg) fall back to the English name.
 const PALETTE_PT = {
   "Shades of Hey!":"Tons de Finta","Terra Echoes":"Ecos da Terra","Coral Reef":"Recife de Coral","Dino Disco":"Disco Dino",
-  "Forest Whisper":"Sussurro da Floresta","Serenity":"Serenidade","Dusk Riverbed":"Leito ao Anoitecer","Galactic Latte":"Latte Galatico",
-  "Desert Mirage":"Miragem do Deserto","Citrus Slate":"Ardosia Citrica","Night Owl Doodles":"Rabiscos Noturnos",
+  "Forest Whisper":"Sussurro da Floresta","Serenity":"Serenidade","Dusk Riverbed":"Leito ao Anoitecer","Galactic Latte":"Latte Galático",
+  "Desert Mirage":"Miragem do Deserto","Citrus Slate":"Ardósia Cítrica","Night Owl Doodles":"Rabiscos Noturnos",
   "Elephant Pajamas":"Pijama de Elefantinho","Salsa Blush":"Blush de Salsa","Magma Mambo":"Mambo de Magma","Lunar Chuckles":"Risadas Lunares"
 };
+// Portuguese size names (for the e-mail text). Filename uses palette only.
+const SIZE_PT = { "Crumb":"Migalha","Pebbit":"Seixinho","Stonelet":"Pedrinha","Rockling":"Rochinha","Boulderette":"Matacãozinho","Craglet":"Penhasquinho","Mountlet":"Montículo" };
 function slugify(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-+|-+$/g,''); }
 function fileNameFor(key){
   let traits=null, seq=0;
@@ -136,11 +138,13 @@ btn.addEventListener('click', async function(){ hint.textContent='Preparando…'
 
 function emailHtml(base, key, traits){
   const img = base+'/img/'+key;
-  const size = (traits && traits.Size) ? (' (tamanho '+traits.Size+')') : '';
+  const palPT = (traits && traits.Palette) ? (PALETTE_PT[traits.Palette] || traits.Palette) : '';
+  const sizePT = (traits && traits.Size) ? (SIZE_PT[traits.Size] || traits.Size) : '';
+  const detail = (palPT || sizePT) ? (' (' + [palPT?('paleta '+palPT):'', sizePT?('tamanho '+sizePT):''].filter(Boolean).join(', ') + ')') : '';
   return `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1d1d1f;line-height:1.55">
   <p style="font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#9a8038;margin:0 0 6px">Casa NUA · Domínio Público</p>
   <h1 style="font-size:23px;margin:0 0 14px">Seu Seixo chegou 🪨</h1>
-  <p>Obrigado por visitar a <strong>galeria Domínio Público</strong> da <strong>Casa NUA</strong> na Formosa, no coração de São Paulo. Você acabou de gerar um Seixo único${size} — ele está em <strong>alta resolução</strong> em anexo neste e-mail, e logo abaixo:</p>
+  <p>Obrigado por visitar a <strong>galeria Domínio Público</strong> da <strong>Casa NUA</strong> na Formosa, no coração de São Paulo. Você acabou de gerar um Seixo único${detail} — ele está em <strong>alta resolução</strong> em anexo neste e-mail.</p>
   <p style="text-align:center;margin:18px 0"><img src="${img}" alt="Seu Seixo" style="width:100%;max-width:420px;border-radius:10px"/></p>
   <h2 style="font-size:17px;margin:24px 0 8px">O que você acabou de criar</h2>
   <p><strong>Seixos (Pebbles)</strong> é uma obra generativa <strong>on-chain</strong> de <strong>Zeblocks</strong>, em <strong>domínio público (CC0)</strong> — livre para qualquer pessoa usar, remixar, imprimir e construir em cima, sem pedir permissão. O algoritmo que desenha cada Seixo vive na blockchain Ethereum, e cada combinação é única. As <strong>1.000 Pebbles</strong> que você viu na exposição são os NFTs originais, mas o algoritmo permite a criação de <strong>infinitas</strong> novas obras como a que você acabou de criar, sempre únicas!</p>
