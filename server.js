@@ -30,8 +30,9 @@ if (TTL_HOURS > 0) setInterval(() => { try { const now = Date.now(), ttl = TTL_H
 const jobs = new Map();                 // key -> { status:'queued'|'rendering'|'done'|'error', error, traits, ts }
 const queue = []; let active = 0;
 function startJob(key, hash, genome, h){
-  jobs.set(key, { status:'queued', ts:Date.now() });
-  queue.push({ key, hash, genome, h }); pump();
+  const seq = nextSeq();                                 // sequential number for this generated Seixo (used in the filename)
+  jobs.set(key, { status:'queued', ts:Date.now(), seq });
+  queue.push({ key, hash, genome, h, seq }); pump();
 }
 function pump(){
   while (active < MAX_CONC && queue.length){
@@ -41,7 +42,7 @@ function pump(){
     let w;
     try {
       w = new Worker(path.join(__dirname,'worker.js'), {
-        workerData:{ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY },
+        workerData:{ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq },
         resourceLimits:{ maxOldGenerationSizeMb: HEAP_MB }   // worker threads reject --expose-gc execArgv; engine's gc() is optional (guarded)
       });
     } catch(e){ const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e); jobs.set(job.key,jj); active--; continue; }
@@ -68,6 +69,27 @@ function readBody(req){ return new Promise((resolve)=>{ let b=''; req.on('data',
 function baseUrl(req){ return PUBLIC_URL || ('https://' + (req.headers.host||'localhost')); }
 function traitsFor(key){ try { return JSON.parse(fs.readFileSync(path.join(STORE, key+'.json'),'utf8')).traits; } catch(e){ return null; } }
 
+// ---- friendly filenames: Seixo_<NNNN>-<Palette-PT>.jpg ----
+// Portuguese palette names. Others (Unigrids, Beatboxes, Sgt. Pepe, Blueprint, summer.jpg) fall back to the English name.
+const PALETTE_PT = {
+  "Shades of Hey!":"Tons de Finta","Terra Echoes":"Ecos da Terra","Coral Reef":"Recife de Coral","Dino Disco":"Disco Dino",
+  "Forest Whisper":"Sussurro da Floresta","Serenity":"Serenidade","Dusk Riverbed":"Leito ao Anoitecer","Galactic Latte":"Latte Galatico",
+  "Desert Mirage":"Miragem do Deserto","Citrus Slate":"Ardosia Citrica","Night Owl Doodles":"Rabiscos Noturnos",
+  "Elephant Pajamas":"Pijama de Elefantinho","Salsa Blush":"Blush de Salsa","Magma Mambo":"Mambo de Magma","Lunar Chuckles":"Risadas Lunares"
+};
+function slugify(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-+|-+$/g,''); }
+function fileNameFor(key){
+  let traits=null, seq=0;
+  try { const j=JSON.parse(fs.readFileSync(path.join(STORE, key+'.json'),'utf8')); traits=j.traits; seq=j.seq||0; } catch(e){}
+  const pal = (traits && traits.Palette) ? (PALETTE_PT[traits.Palette] || traits.Palette) : '';
+  const num = String(seq||0).padStart(4,'0');
+  return 'Seixo_' + num + (pal ? '-'+slugify(pal) : '') + '.jpg';
+}
+// persistent sequence counter (STORE/counter.txt). NOTE: STORE defaults to ephemeral /tmp -> resets on redeploy.
+const COUNTER_FILE = path.join(STORE, 'counter.txt');
+let seqCounter = (()=>{ try { return parseInt(fs.readFileSync(COUNTER_FILE,'utf8'),10) || 0; } catch(e){ return 0; } })();
+function nextSeq(){ seqCounter++; try { fs.writeFileSync(COUNTER_FILE, String(seqCounter)); } catch(e){} return seqCounter; }
+
 function viewPage(base, key, traits){
   const img = base+'/img/'+key, status = base+'/status/'+key;
   const size = (traits && traits.Size) ? traits.Size : '';
@@ -92,11 +114,11 @@ a{color:#d8b25a;text-decoration:none}</style></head><body>
 <div class="hint" id="hint"></div>
 <div class="foot">SEIXOS (Pebbles)${size?(' · '+size):''} · por Zeblocks · CC0<br>Arte digital descentralizada · <a href="https://6529.io">6529</a></div>
 <script>
-var IMG=${JSON.stringify(img)}, STATUS=${JSON.stringify(status)}, NAME="Seixo.jpg";
+var IMG=${JSON.stringify(img)}, STATUS=${JSON.stringify(status)}, NAME=${JSON.stringify(fileNameFor(key))};
 var prep=document.getElementById('prep'), peb=document.getElementById('peb'), btn=document.getElementById('save'), hint=document.getElementById('hint');
 function reveal(){ peb.onload=function(){ prep.style.display='none'; peb.style.display='block'; btn.style.display='block'; hint.textContent='Toque no botão para guardar. Você também pode tocar e segurar a imagem.'; }; peb.src=IMG+'?t='+Date.now(); }
 function poll(){ fetch(STATUS,{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
-  if(j.ready){ reveal(); }
+  if(j.ready){ if(j.filename) NAME=j.filename; reveal(); }
   else if(j.status==='error'){ prep.innerHTML='Não foi possível gerar este Seixo.<br>Tente gerar outro no totem.'; }
   else { setTimeout(poll, 2500); }
 }).catch(function(){ setTimeout(poll, 3500); }); }
@@ -115,12 +137,15 @@ function emailHtml(base, key, traits){
   return `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1d1d1f;line-height:1.55">
   <p style="font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#9a8038;margin:0 0 6px">Casa NUA · Domínio Público</p>
   <h1 style="font-size:23px;margin:0 0 14px">Seu Seixo chegou 🪨</h1>
-  <p>Obrigado por visitar a <strong>Casa NUA</strong> na <strong>Galeria Domínio Público</strong>, no coração de São Paulo. Você acabou de gerar um Seixo único${size} — ele está em <strong>alta resolução</strong> em anexo neste e-mail, e logo abaixo:</p>
+  <p>Obrigado por visitar a <strong>galeria Domínio Público</strong> da <strong>Casa NUA</strong> na Formosa, no coração de São Paulo. Você acabou de gerar um Seixo único${size} — ele está em <strong>alta resolução</strong> em anexo neste e-mail, e logo abaixo:</p>
   <p style="text-align:center;margin:18px 0"><img src="${img}" alt="Seu Seixo" style="width:100%;max-width:420px;border-radius:10px"/></p>
   <h2 style="font-size:17px;margin:24px 0 8px">O que você acabou de criar</h2>
-  <p><strong>Seixos (Pebbles)</strong> é uma obra generativa <strong>on-chain</strong> de <strong>Zeblocks</strong>, em <strong>domínio público (CC0)</strong> — livre para qualquer pessoa usar, remixar, imprimir e construir em cima, sem pedir permissão. O algoritmo que desenha cada Seixo vive na blockchain Ethereum, e cada combinação é única.</p>
+  <p><strong>Seixos (Pebbles)</strong> é uma obra generativa <strong>on-chain</strong> de <strong>Zeblocks</strong>, em <strong>domínio público (CC0)</strong> — livre para qualquer pessoa usar, remixar, imprimir e construir em cima, sem pedir permissão. O algoritmo que desenha cada Seixo vive na blockchain Ethereum, e cada combinação é única. As <strong>1.000 Pebbles</strong> que você viu na exposição são os NFTs originais, mas o algoritmo permite a criação de <strong>infinitas</strong> novas obras como a que você acabou de criar, sempre únicas!</p>
   <h2 style="font-size:17px;margin:24px 0 8px">Sobre a Casa NUA</h2>
   <p>A Casa NUA é um museu de arte digital descentralizada em São Paulo. Na <strong>Galeria Domínio Público</strong> exibimos exclusivamente arte NFT em <strong>CC0</strong>, em parceria com a rede <strong>6529</strong> — um movimento por arte e propriedade verdadeiramente descentralizadas e de domínio público.</p>
+  <h2 style="font-size:17px;margin:24px 0 8px">Siga a Casa NUA no Instagram</h2>
+  <p>Acompanhe exposições, artistas e bastidores em <a href="https://instagram.com/nua.casa" style="color:#9a8038"><strong>@nua.casa</strong></a>.</p>
+  <p style="text-align:center;margin:14px 0"><a href="https://instagram.com/nua.casa"><img src="${base}/ig-qr.png" alt="Instagram @nua.casa — Casa NUA" style="width:190px;height:190px;border-radius:14px"/></a></p>
   <p style="margin-top:18px">🔗 <a href="https://dominiopublico.nua.casa" style="color:#9a8038">dominiopublico.nua.casa</a> &nbsp;·&nbsp; <a href="https://6529.io" style="color:#9a8038">6529.io</a></p>
   <p style="font-size:12px;color:#9b9b9b;margin-top:26px;border-top:1px solid #eee;padding-top:14px">Casa NUA · Domínio Público · São Paulo · Este Seixo é CC0 — é seu para guardar, imprimir e compartilhar.</p>
 </div>`;
@@ -131,13 +156,19 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { cors(res); res.writeHead(204); return res.end(); }
   if (u.pathname === '/health' || u.pathname === '/') return json(res, 200, { ok:true, service:'seixos-render', defaultH:DEFAULT_H, active, queued:queue.length });
 
+  if (u.pathname === '/ig-qr.png') {                                  // Instagram QR (Casa NUA) — used in the onboarding e-mail
+    try { cors(res); res.writeHead(200, {'content-type':'image/png','cache-control':'public, max-age=86400'});
+      return fs.createReadStream(path.join(__dirname,'ig-qr.png')).pipe(res); }
+    catch(e){ res.writeHead(404); return res.end('not found'); }
+  }
+
   if (u.pathname === '/list') {                                       // archive listing for the local pull script
     let files = []; try { files = fs.readdirSync(STORE).filter(f => /\.jpg$/.test(f)); } catch(e){}
     if (u.searchParams.get('format') === 'json') {
       const items = files.map(f => { let mtime=0, traits=null;
         try { mtime = fs.statSync(path.join(STORE,f)).mtimeMs; } catch(e){}
         try { traits = JSON.parse(fs.readFileSync(path.join(STORE,f+'.json'),'utf8')).traits; } catch(e){}
-        return { key:f, mtime, traits }; }).sort((a,b)=>a.mtime-b.mtime);
+        return { key:f, filename: fileNameFor(f), mtime, traits }; }).sort((a,b)=>a.mtime-b.mtime);
       return json(res, 200, { count: items.length, items });
     }
     cors(res); res.writeHead(200, {'content-type':'text/plain; charset=utf-8'}); return res.end(files.join('\n'));
@@ -154,7 +185,7 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname.startsWith('/status/')) {
     const key = sanitize(u.pathname.slice('/status/'.length));
     const ready = isReady(key); const j = jobs.get(key);
-    return json(res, 200, { ready, status: ready ? 'done' : (j ? j.status : 'unknown'), error: (j && j.status==='error') ? j.error : undefined });
+    return json(res, 200, { ready, status: ready ? 'done' : (j ? j.status : 'unknown'), filename: ready ? fileNameFor(key) : undefined, error: (j && j.status==='error') ? j.error : undefined });
   }
 
   if (u.pathname.startsWith('/view/')) {
@@ -189,7 +220,7 @@ const server = http.createServer(async (req, res) => {
       const r = await fetch('https://api.resend.com/emails', { method:'POST',
         headers:{ 'authorization':'Bearer '+RESEND_KEY, 'content-type':'application/json' },
         body: JSON.stringify({ from: FROM_EMAIL, to: b.to, subject: 'Seu Seixo — Casa NUA · Domínio Público',
-          html: emailHtml(base, key, traitsFor(key)), attachments: [{ filename:'Seixo.jpg', content }] }) });
+          html: emailHtml(base, key, traitsFor(key)), attachments: [{ filename: fileNameFor(key), content }] }) });
       const j = await r.json().catch(()=>({}));
       if (!r.ok) { process.stderr.write('[email] resend fail '+JSON.stringify(j)+'\n'); return json(res, 502, { error:'resend failed', detail:j }); }
       return json(res, 200, { ok:true, key, viewUrl: base+'/view/'+key });

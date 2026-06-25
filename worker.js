@@ -6,7 +6,7 @@ const path = require('path');
 const { render } = require('./engine');
 
 (async () => {
-  const { hash, genome, h, key, storeDir, quality } = workerData;
+  const { hash, genome, h, key, storeDir, quality, seq } = workerData;
   try {
     const r = await render(hash, genome, h);
     if (!r || !r.canvas) throw new Error('render produced no canvas');
@@ -14,7 +14,7 @@ const { render } = require('./engine');
     const tmp = path.join(storeDir, key + '.tmp');
     fs.writeFileSync(tmp, buf);
     fs.renameSync(tmp, path.join(storeDir, key));            // atomic: file only appears complete
-    try { fs.writeFileSync(path.join(storeDir, key + '.json'), JSON.stringify({ traits: r.traits, w: r.w, h: r.hgt })); } catch (e) {}
+    try { fs.writeFileSync(path.join(storeDir, key + '.json'), JSON.stringify({ traits: r.traits, w: r.w, h: r.hgt, seq: seq })); } catch (e) {}
     parentPort.postMessage({ ok: true, traits: r.traits, w: r.w, h: r.hgt, bytes: buf.length });
   } catch (e) {
     parentPort.postMessage({ ok: false, error: String(e && e.message || e) });
