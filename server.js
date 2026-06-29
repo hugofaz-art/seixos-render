@@ -119,48 +119,94 @@ a{color:#d8b25a;text-decoration:none}
 .ig{display:inline-block;margin-top:20px;color:#d8b25a;font-size:14px;font-weight:700;border:1px solid #d8b25a;border-radius:12px;padding:12px 20px;text-decoration:none}
 .ig:active{opacity:.85}</style></head><body>
 <div class="logo">Casa NUA · Domínio Público</div>
-<div class="frame"><div class="prep" id="prep"><div class="spin"></div>Preparando seu Seixo em alta resolução…<br><small style="opacity:.7">isso pode levar um instante</small></div><img id="peb" alt="Seu Seixo"></div>
-<button class="btn" id="save">Salvar nas minhas Fotos</button>
+<div class="frame"><div class="prep" id="prep"><div class="spin"></div></div><img id="peb" alt=""></div>
+<button class="btn" id="save"></button>
 <div class="hint" id="hint"></div>
-<a class="ig" href="https://instagram.com/nua.casa" target="_blank" rel="noopener">Siga a Casa NUA &nbsp;·&nbsp; <strong>@nua.casa</strong> &nbsp;→</a>
-<div class="foot">SEIXOS (Pebbles)${size?(' · '+size):''} · por Zeblocks · CC0<br>Arte digital descentralizada · <a href="https://6529.io">6529</a></div>
+<a class="ig" id="ig" href="https://instagram.com/nua.casa" target="_blank" rel="noopener"></a>
+<div class="foot" id="foot"></div>
 <script>
 var IMG=${JSON.stringify(img)}, STATUS=${JSON.stringify(status)}, NAME=${JSON.stringify(fileNameFor(key))};
+var EN = !/^pt/i.test(navigator.language||navigator.userLanguage||'pt');
+var S = EN ? {
+  prep:'Preparing your Pebble in high resolution…', prepSub:'this may take a moment',
+  queue:function(n){ return n+(n===1?' person':' people')+' ahead of you in line.<br><small style="opacity:.7">your Pebble is already being prepared…</small>'; },
+  save:'Save to my Photos', revealHint:'Tap the button to save. You can also tap and hold the image.',
+  err:'Couldn’t generate this Pebble.<br>Try generating another at the kiosk.',
+  preparing:'Preparing…', shareHint:'Choose “Save Image” to keep it in your Photos.', dlHint:'Downloaded. Tap and hold the image to save to Photos.', holdHint:'Tap and hold the image above to save to your Photos.',
+  ig:'Follow Casa NUA &nbsp;·&nbsp; <strong>@nua.casa</strong> &nbsp;→', foot:'Pebbles · by Zeblocks · CC0<br>Decentralized digital art · <a href="https://6529.io">6529</a>', title:'Your Pebble'
+} : {
+  prep:'Preparando seu Seixo em alta resolução…', prepSub:'isso pode levar um instante',
+  queue:function(n){ return n+(n===1?' pessoa':' pessoas')+' na sua frente na fila.<br><small style="opacity:.7">seu Seixo já está sendo preparado…</small>'; },
+  save:'Salvar nas minhas Fotos', revealHint:'Toque no botão para guardar. Você também pode tocar e segurar a imagem.',
+  err:'Não foi possível gerar este Seixo.<br>Tente gerar outro no totem.',
+  preparing:'Preparando…', shareHint:'Escolha “Salvar Imagem” para guardar nas Fotos.', dlHint:'Baixado. Toque e segure a imagem para guardar nas Fotos.', holdHint:'Toque e segure a imagem acima para salvar nas suas Fotos.',
+  ig:'Siga a Casa NUA &nbsp;·&nbsp; <strong>@nua.casa</strong> &nbsp;→', foot:'SEIXOS (Pebbles) · por Zeblocks · CC0<br>Arte digital descentralizada · <a href="https://6529.io">6529</a>', title:'Seu Seixo'
+};
+document.documentElement.lang = EN?'en':'pt-BR';
 var prep=document.getElementById('prep'), peb=document.getElementById('peb'), btn=document.getElementById('save'), hint=document.getElementById('hint');
-function reveal(){ peb.onload=function(){ prep.style.display='none'; peb.style.display='block'; btn.style.display='block'; hint.textContent='Toque no botão para guardar. Você também pode tocar e segurar a imagem.'; }; peb.src=IMG+'?t='+Date.now(); }
+peb.alt=S.title; btn.textContent=S.save; document.getElementById('ig').innerHTML=S.ig; document.getElementById('foot').innerHTML=S.foot;
+function setPrep(){ prep.innerHTML='<div class="spin"></div>'+S.prep+'<br><small style="opacity:.7">'+S.prepSub+'</small>'; }
+setPrep();
+function reveal(){ peb.onload=function(){ prep.style.display='none'; peb.style.display='block'; btn.style.display='block'; hint.textContent=S.revealHint; }; peb.src=IMG+'?t='+Date.now(); }
 function poll(){ fetch(STATUS,{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
   if(j.ready){ if(j.filename) NAME=j.filename; reveal(); }
-  else if(j.status==='error'){ prep.innerHTML='Não foi possível gerar este Seixo.<br>Tente gerar outro no totem.'; }
-  else { setTimeout(poll, 2500); }
+  else if(j.status==='error'){ prep.innerHTML=S.err; }
+  else { prep.innerHTML = (j.ahead>0) ? ('<div class="spin"></div>'+S.queue(j.ahead)) : null; if(!(j.ahead>0)) setPrep(); setTimeout(poll, 2500); }
 }).catch(function(){ setTimeout(poll, 3500); }); }
 poll();
-btn.addEventListener('click', async function(){ hint.textContent='Preparando…';
+btn.addEventListener('click', async function(){ hint.textContent=S.preparing;
   try{ var resp=await fetch(IMG,{mode:'cors'}); var blob=await resp.blob(); var file=new File([blob],NAME,{type:'image/jpeg'});
-    if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:'Meu Seixo'}); hint.textContent='Escolha "Salvar Imagem" para guardar nas Fotos.'; }
-    else { var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=NAME; document.body.appendChild(a); a.click(); a.remove(); hint.textContent='Baixado. Toque e segure a imagem para guardar nas Fotos.'; }
-  }catch(e){ hint.textContent='Toque e segure a imagem acima para salvar nas suas Fotos.'; } });
+    if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:S.title}); hint.textContent=S.shareHint; }
+    else { var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=NAME; document.body.appendChild(a); a.click(); a.remove(); hint.textContent=S.dlHint; }
+  }catch(e){ hint.textContent=S.holdHint; } });
 </script></body></html>`;
 }
 
-function emailHtml(base, key, traits){
+function emailHtml(base, key, traits, lang){
+  const EN = lang==='en';
   const img = base+'/img/'+key;
-  const palPT = (traits && traits.Palette) ? (PALETTE_PT[traits.Palette] || traits.Palette) : '';
-  const sizePT = (traits && traits.Size) ? (SIZE_PT[traits.Size] || traits.Size) : '';
-  const detail = (palPT || sizePT) ? (' (' + [palPT?('paleta '+palPT):'', sizePT?('tamanho '+sizePT):''].filter(Boolean).join(', ') + ')') : '';
+  const pal = (traits && traits.Palette) ? (EN ? traits.Palette : (PALETTE_PT[traits.Palette]||traits.Palette)) : '';
+  const sz  = (traits && traits.Size)    ? (EN ? traits.Size    : (SIZE_PT[traits.Size]||traits.Size))       : '';
+  const detail = (pal||sz) ? (' (' + (EN
+      ? [pal?('palette '+pal):'', sz?('size '+sz):''].filter(Boolean).join(', ')
+      : [pal?('paleta '+pal):'', sz?('tamanho '+sz):''].filter(Boolean).join(', ')) + ')') : '';
+  const t = EN ? {
+    h1:'Your Pebble has arrived 🪨',
+    p1:`Thank you for visiting the <strong>Domínio Público gallery</strong> at <strong>Casa NUA</strong> in Formosa, in the heart of São Paulo. You just generated a unique Pebble${detail} — it is attached to this e-mail in <strong>high resolution</strong>.`,
+    h2a:'What you just created',
+    p2:`<strong>Pebbles</strong> is a generative <strong>on-chain</strong> artwork by <strong>Zeblocks</strong>, in the <strong>public domain (CC0)</strong> — free for anyone to use, remix, print, and build upon, without asking permission. The algorithm that draws each Pebble lives on the Ethereum blockchain, and each combination is unique. The <strong>1,000 Pebbles</strong> you saw in the exhibition are the original NFTs, but the algorithm allows the creation of <strong>infinite</strong> new works like the one you just created, always unique!`,
+    h2b:'About Casa NUA',
+    p3:`Casa NUA is a decentralized digital art museum in São Paulo. At <strong>Galeria Domínio Público</strong> we exhibit exclusively <strong>CC0</strong> NFT art, in partnership with the <strong>6529</strong> network — a movement for truly decentralized, public-domain art and ownership.`,
+    h2c:'Follow Casa NUA on Instagram',
+    p4:`Follow exhibitions, artists, and behind-the-scenes at <a href="https://instagram.com/nua.casa" style="color:#9a8038"><strong>@nua.casa</strong></a>.`,
+    foot:'Casa NUA · Domínio Público · São Paulo · This Pebble is CC0 — it is yours to keep, print, and share.',
+    imgAlt:'Your Pebble'
+  } : {
+    h1:'Seu Seixo chegou 🪨',
+    p1:`Obrigado por visitar a <strong>galeria Domínio Público</strong> da <strong>Casa NUA</strong> na Formosa, no coração de São Paulo. Você acabou de gerar um Seixo único${detail} — ele está em <strong>alta resolução</strong> em anexo neste e-mail.`,
+    h2a:'O que você acabou de criar',
+    p2:`<strong>Seixos (Pebbles)</strong> é uma obra generativa <strong>on-chain</strong> de <strong>Zeblocks</strong>, em <strong>domínio público (CC0)</strong> — livre para qualquer pessoa usar, remixar, imprimir e construir em cima, sem pedir permissão. O algoritmo que desenha cada Seixo vive na blockchain Ethereum, e cada combinação é única. As <strong>1.000 Pebbles</strong> que você viu na exposição são os NFTs originais, mas o algoritmo permite a criação de <strong>infinitas</strong> novas obras como a que você acabou de criar, sempre únicas!`,
+    h2b:'Sobre a Casa NUA',
+    p3:`A Casa NUA é um museu de arte digital descentralizada em São Paulo. Na <strong>Galeria Domínio Público</strong> exibimos exclusivamente arte NFT em <strong>CC0</strong>, em parceria com a rede <strong>6529</strong> — um movimento por arte e propriedade verdadeiramente descentralizadas e de domínio público.`,
+    h2c:'Siga a Casa NUA no Instagram',
+    p4:`Acompanhe exposições, artistas e bastidores em <a href="https://instagram.com/nua.casa" style="color:#9a8038"><strong>@nua.casa</strong></a>.`,
+    foot:'Casa NUA · Domínio Público · São Paulo · Este Seixo é CC0 — é seu para guardar, imprimir e compartilhar.',
+    imgAlt:'Seu Seixo'
+  };
   return `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1d1d1f;line-height:1.55">
   <p style="font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#9a8038;margin:0 0 6px">Casa NUA · Domínio Público</p>
-  <h1 style="font-size:23px;margin:0 0 14px">Seu Seixo chegou 🪨</h1>
-  <p>Obrigado por visitar a <strong>galeria Domínio Público</strong> da <strong>Casa NUA</strong> na Formosa, no coração de São Paulo. Você acabou de gerar um Seixo único${detail} — ele está em <strong>alta resolução</strong> em anexo neste e-mail.</p>
-  <p style="text-align:center;margin:18px 0"><img src="${img}" alt="Seu Seixo" style="width:100%;max-width:420px;border-radius:10px"/></p>
-  <h2 style="font-size:17px;margin:24px 0 8px">O que você acabou de criar</h2>
-  <p><strong>Seixos (Pebbles)</strong> é uma obra generativa <strong>on-chain</strong> de <strong>Zeblocks</strong>, em <strong>domínio público (CC0)</strong> — livre para qualquer pessoa usar, remixar, imprimir e construir em cima, sem pedir permissão. O algoritmo que desenha cada Seixo vive na blockchain Ethereum, e cada combinação é única. As <strong>1.000 Pebbles</strong> que você viu na exposição são os NFTs originais, mas o algoritmo permite a criação de <strong>infinitas</strong> novas obras como a que você acabou de criar, sempre únicas!</p>
-  <h2 style="font-size:17px;margin:24px 0 8px">Sobre a Casa NUA</h2>
-  <p>A Casa NUA é um museu de arte digital descentralizada em São Paulo. Na <strong>Galeria Domínio Público</strong> exibimos exclusivamente arte NFT em <strong>CC0</strong>, em parceria com a rede <strong>6529</strong> — um movimento por arte e propriedade verdadeiramente descentralizadas e de domínio público.</p>
-  <h2 style="font-size:17px;margin:24px 0 8px">Siga a Casa NUA no Instagram</h2>
-  <p>Acompanhe exposições, artistas e bastidores em <a href="https://instagram.com/nua.casa" style="color:#9a8038"><strong>@nua.casa</strong></a>.</p>
+  <h1 style="font-size:23px;margin:0 0 14px">${t.h1}</h1>
+  <p>${t.p1}</p>
+  <p style="text-align:center;margin:18px 0"><img src="${img}" alt="${t.imgAlt}" style="width:100%;max-width:420px;border-radius:10px"/></p>
+  <h2 style="font-size:17px;margin:24px 0 8px">${t.h2a}</h2>
+  <p>${t.p2}</p>
+  <h2 style="font-size:17px;margin:24px 0 8px">${t.h2b}</h2>
+  <p>${t.p3}</p>
+  <h2 style="font-size:17px;margin:24px 0 8px">${t.h2c}</h2>
+  <p>${t.p4}</p>
   <p style="text-align:center;margin:14px 0"><a href="https://instagram.com/nua.casa"><img src="${base}/ig-qr.png" alt="Instagram @nua.casa — Casa NUA" style="width:190px;height:190px;border-radius:14px"/></a></p>
   <p style="margin-top:18px">🔗 <a href="https://dominiopublico.nua.casa" style="color:#9a8038">dominiopublico.nua.casa</a> &nbsp;·&nbsp; <a href="https://6529.io" style="color:#9a8038">6529.io</a></p>
-  <p style="font-size:12px;color:#9b9b9b;margin-top:26px;border-top:1px solid #eee;padding-top:14px">Casa NUA · Domínio Público · São Paulo · Este Seixo é CC0 — é seu para guardar, imprimir e compartilhar.</p>
+  <p style="font-size:12px;color:#9b9b9b;margin-top:26px;border-top:1px solid #eee;padding-top:14px">${t.foot}</p>
 </div>`;
 }
 
@@ -210,7 +256,9 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname.startsWith('/status/')) {
     const key = sanitize(u.pathname.slice('/status/'.length));
     const ready = isReady(key); const j = jobs.get(key);
-    return json(res, 200, { ready, status: ready ? 'done' : (j ? j.status : 'unknown'), filename: ready ? fileNameFor(key) : undefined, error: (j && j.status==='error') ? j.error : undefined });
+    let ahead = 0;                                                   // how many renders are ahead of this one (queue position) — for the "wait in line" message
+    if (!ready) { const qi = queue.findIndex(q=>q.key===key); ahead = qi>=0 ? (qi + active) : 0; }
+    return json(res, 200, { ready, status: ready ? 'done' : (j ? j.status : 'unknown'), ahead, filename: ready ? fileNameFor(key) : undefined, error: (j && j.status==='error') ? j.error : undefined });
   }
 
   if (u.pathname.startsWith('/view/')) {
@@ -244,8 +292,8 @@ const server = http.createServer(async (req, res) => {
       const content = fs.readFileSync(path.join(STORE, key)).toString('base64');
       const r = await fetch('https://api.resend.com/emails', { method:'POST',
         headers:{ 'authorization':'Bearer '+RESEND_KEY, 'content-type':'application/json' },
-        body: JSON.stringify({ from: FROM_EMAIL, to: b.to, subject: 'Seu Seixo — Casa NUA · Domínio Público',
-          html: emailHtml(base, key, traitsFor(key)), attachments: [{ filename: fileNameFor(key), content }] }) });
+        body: JSON.stringify({ from: FROM_EMAIL, to: b.to, subject: (b.lang==='en' ? 'Your Pebble — Casa NUA · Domínio Público' : 'Seu Seixo — Casa NUA · Domínio Público'),
+          html: emailHtml(base, key, traitsFor(key), b.lang), attachments: [{ filename: fileNameFor(key), content }] }) });
       const j = await r.json().catch(()=>({}));
       if (!r.ok) { process.stderr.write('[email] resend fail '+JSON.stringify(j)+'\n'); return json(res, 502, { error:'resend failed', detail:j }); }
       try {                                                            // PRIVATE visitor log (for tabulation / invites) — not exposed publicly
