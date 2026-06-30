@@ -56,9 +56,17 @@ function pump(){
       jobs.set(job.key, jj); });
     w.on('error', e => { const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e&&e.message||e); jobs.set(job.key,jj); process.stderr.write('[job] worker error '+job.key+' '+e+'\n'); });
     w.on('exit', (code) => { const jj=jobs.get(job.key)||{};
-      if (code!==0 && jj.status!=='done' && jj.status!=='error' && !isReady(job.key)){   // worker died mid-render (almost always OOM at 4K) -> mark error so /view and /email stop waiting forever
-        jj.status='error'; jj.error='worker exited code '+code+' (out of memory on a heavy render)'; jobs.set(job.key, jj);
-        process.stderr.write('[job] CRASH '+job.key+' exit code='+code+'\n');
+      if (code!==0 && jj.status!=='done' && jj.status!=='error' && !isReady(job.key)){   // worker died mid-render (almost always OOM at 4K)
+        const tries = (job.tries||0) + 1;
+        if (tries <= 2){                                         // RETRY at lower resolution so the visitor still gets a pebble (a bit smaller) instead of an error
+          const h2 = Math.max(1600, Math.round(job.h * 0.75));
+          jj.status='rendering'; jobs.set(job.key, jj);
+          queue.unshift({ key:job.key, hash:job.hash, genome:job.genome, h:h2, seq:job.seq, createdAt:job.createdAt, mint:job.mint, tries });
+          process.stderr.write('[job] OOM -> retry '+job.key+' at h='+h2+' (try '+tries+')\n');
+        } else {
+          jj.status='error'; jj.error='render failed after retries (memory)'; jobs.set(job.key, jj);
+          process.stderr.write('[job] CRASH '+job.key+' gave up after '+tries+' tries\n');
+        }
       }
       active--; pump(); });
   }
