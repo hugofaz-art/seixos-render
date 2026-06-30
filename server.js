@@ -32,11 +32,11 @@ if (TTL_HOURS > 0) setInterval(() => { try { const now = Date.now(), ttl = TTL_H
 // ---- async render queue ----
 const jobs = new Map();                 // key -> { status:'queued'|'rendering'|'done'|'error', error, traits, ts }
 const queue = []; let active = 0;
-function startJob(key, hash, genome, h){
+function startJob(key, hash, genome, h, mint){
   const seq = nextSeq();                                 // sequential number for this generated Seixo (used in the filename)
   const createdAt = new Date().toISOString();            // generation timestamp (UTC, ISO 8601)
   jobs.set(key, { status:'queued', ts:Date.now(), seq, createdAt });
-  queue.push({ key, hash, genome, h, seq, createdAt }); pump();
+  queue.push({ key, hash, genome, h, seq, createdAt, mint: mint || 'MemeMaxis' }); pump();
 }
 function pump(){
   while (active < MAX_CONC && queue.length){
@@ -46,7 +46,7 @@ function pump(){
     let w;
     try {
       w = new Worker(path.join(__dirname,'worker.js'), {
-        workerData:{ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq, createdAt:job.createdAt },
+        workerData:{ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq, createdAt:job.createdAt, mint:job.mint },
         resourceLimits:{ maxOldGenerationSizeMb: HEAP_MB }   // worker threads reject --expose-gc execArgv; engine's gc() is optional (guarded)
       });
     } catch(e){ const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e); jobs.set(job.key,jj); active--; continue; }
@@ -272,7 +272,7 @@ const server = http.createServer(async (req, res) => {
       if (!b.hash || !b.genome) return json(res, 400, { error:'hash and genome required' });
       const H = Math.max(200, Math.min(parseInt(b.h || DEFAULT_H, 10), MAX_H));
       const key = crypto.randomBytes(8).toString('hex') + '.jpg';
-      startJob(key, b.hash, b.genome, H);                                    // returns immediately; render runs in a worker
+      startJob(key, b.hash, b.genome, H, b.mint);                            // returns immediately; render runs in a worker (mint gates special palettes)
       const base = baseUrl(req);
       return json(res, 202, { key, url: base+'/img/'+key, viewUrl: base+'/view/'+key, statusUrl: base+'/status/'+key, status:'rendering', h:H });
     } catch (e) { return json(res, 500, { error: String(e && e.message || e) }); }
@@ -285,7 +285,7 @@ const server = http.createServer(async (req, res) => {
       let key = sanitize(b.key);
       if (!key || (!isReady(key) && !jobs.get(key))) {                        // no key (or unknown) -> render now
         if (!b.hash || !b.genome) return json(res, 400, { error:'key OR (hash+genome) required' });
-        key = crypto.randomBytes(8).toString('hex') + '.jpg'; startJob(key, b.hash, b.genome, Math.max(200, Math.min(parseInt(b.h||DEFAULT_H,10), MAX_H)));
+        key = crypto.randomBytes(8).toString('hex') + '.jpg'; startJob(key, b.hash, b.genome, Math.max(200, Math.min(parseInt(b.h||DEFAULT_H,10), MAX_H)), b.mint);
       }
       await waitForKey(key, 240000);                                         // wait up to 4 min for the render to finish
       const base = baseUrl(req);

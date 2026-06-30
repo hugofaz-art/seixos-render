@@ -13,6 +13,7 @@ function patch(s){
   s = s.replace("function o(){return i^=i<<13,i^=i>>17,i^=i<<5,(i<0?1+~i:i)%1e3/1e3}",
     "function o(){i^=i<<13,i^=i>>17,i^=i<<5;var _r=(i<0?1+~i:i)%1e3/1e3;window.__OC__=(window.__OC__|0)+1;var f=window.__FORCED__;return(f&&f[window.__OC__]!==undefined)?f[window.__OC__]:_r}");
   s = s.replace("let Q=[[function", "window.__TRAITS__=Object.assign({},traits);let Q=[[function");
+  s = s.replace('[{"palettes":"MemeMaxis"}]', '[{"palettes":(window.__MINT__||"MemeMaxis")}]');   // mint type configurable -> manual picks of the 7 special palettes (HyperMaxis/UltraMaxis/Sgt. Pepe) render with the right palette set
   return s;
 }
 const PATCHED = patch(RAW);
@@ -57,12 +58,13 @@ const FN = new Function(PATCHED);   // compiled once
 // Render one pebble. genome = {1:..,2:..,...}; hash = '0x...'; h = target height px.
 // async: yields to the event loop periodically so a long render never blocks the server (health checks keep passing)
 // and forced GC can run, keeping peak RSS down. Logs rss to stderr for diagnosis.
-async function render(hash, genome, h, aspect=1.294){
+async function render(hash, genome, h, aspect=1.294, mint='MemeMaxis'){
   RAF = []; MAIN = null; lastCanvas = null;
   window.__SEED__ = hash;
   window.__FORCED__ = genome;
   window.__ASPECT__ = aspect;
   window.__H__ = h;
+  window.__MINT__ = mint || 'MemeMaxis';
   window.__OC__ = 0;
   window.__TRAITS__ = null;
   let done = false;
