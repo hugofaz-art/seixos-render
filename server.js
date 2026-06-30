@@ -55,7 +55,12 @@ function pump(){
       else { jj.status='error'; jj.error=m.error; process.stderr.write('[job] error '+job.key+' '+m.error+'\n'); }
       jobs.set(job.key, jj); });
     w.on('error', e => { const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e&&e.message||e); jobs.set(job.key,jj); process.stderr.write('[job] worker error '+job.key+' '+e+'\n'); });
-    w.on('exit', () => { active--; pump(); });
+    w.on('exit', (code) => { const jj=jobs.get(job.key)||{};
+      if (code!==0 && jj.status!=='done' && jj.status!=='error' && !isReady(job.key)){   // worker died mid-render (almost always OOM at 4K) -> mark error so /view and /email stop waiting forever
+        jj.status='error'; jj.error='worker exited code '+code+' (out of memory on a heavy render)'; jobs.set(job.key, jj);
+        process.stderr.write('[job] CRASH '+job.key+' exit code='+code+'\n');
+      }
+      active--; pump(); });
   }
 }
 function isReady(key){ try { return fs.existsSync(path.join(STORE, key)); } catch(e){ return false; } }
@@ -148,9 +153,10 @@ peb.alt=S.title; btn.textContent=S.save; document.getElementById('ig').innerHTML
 function setPrep(){ prep.innerHTML='<div class="spin"></div>'+S.prep+'<br><small style="opacity:.7">'+S.prepSub+'</small>'; }
 setPrep();
 function reveal(){ peb.onload=function(){ prep.style.display='none'; peb.style.display='block'; btn.style.display='block'; hint.textContent=S.revealHint; }; peb.src=IMG+'?t='+Date.now(); }
+var pollStart=Date.now();
 function poll(){ fetch(STATUS,{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
   if(j.ready){ if(j.filename) NAME=j.filename; reveal(); }
-  else if(j.status==='error'){ prep.innerHTML=S.err; }
+  else if(j.status==='error' || (j.status==='unknown'&&Date.now()-pollStart>15000) || Date.now()-pollStart>300000){ prep.innerHTML=S.err; }   // failed, lost (server restarted), or stuck >5min -> stop the forever-spinner and tell the visitor
   else { prep.innerHTML = (j.ahead>0) ? ('<div class="spin"></div>'+S.queue(j.ahead)) : null; if(!(j.ahead>0)) setPrep(); setTimeout(poll, 2500); }
 }).catch(function(){ setTimeout(poll, 3500); }); }
 poll();

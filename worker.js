@@ -3,6 +3,11 @@
 const { parentPort, workerData } = require('worker_threads');
 const fs = require('fs');
 const path = require('path');
+// Enable manual GC inside the worker. @napi-rs/canvas holds large NATIVE (off-heap) buffers per transient canvas;
+// the engine makes many per frame at 4K. Without forced GC those natives pile up and OOM the instance.
+// worker_threads reject --expose-gc in execArgv, but this runtime trick exposes global.gc anyway, so the
+// engine's periodic global.gc() calls actually run and keep peak RSS down.
+try { require('v8').setFlagsFromString('--expose-gc'); global.gc = require('vm').runInNewContext('gc'); } catch (e) {}
 const { render } = require('./engine');
 
 (async () => {
