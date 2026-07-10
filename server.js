@@ -20,6 +20,7 @@ const FROM_EMAIL= process.env.FROM_EMAIL || 'Seixos <onboarding@resend.dev>';
 const TTL_HOURS = parseInt(process.env.TTL_HOURS || '0', 10);          // 0 = keep forever (archive)
 const MAX_CONC  = parseInt(process.env.MAX_CONCURRENT || '1', 10);     // parallel renders (each ~6-9GB at 4K). 1 = safe on 16GB; bump via env if needed.
 const HEAP_MB   = parseInt(process.env.WORKER_HEAP_MB || '7000', 10);  // V8 heap cap per render worker (4K needs a lot)
+const RENDER_TIMEOUT_MS = parseInt(process.env.RENDER_TIMEOUT_MS || '180000', 10);  // kill a render that runs longer than this — a HUNG render must never hold the single slot and freeze the whole queue (a normal 4K render is ~1-2 min). On kill, the retry re-runs it at lower res.
 
 fs.mkdirSync(STORE, { recursive: true });
 if (TTL_HOURS > 0) setInterval(() => { try { const now = Date.now(), ttl = TTL_HOURS*3600*1000;
@@ -50,13 +51,14 @@ function pump(){
         resourceLimits:{ maxOldGenerationSizeMb: HEAP_MB }   // worker threads reject --expose-gc execArgv; engine's gc() is optional (guarded)
       });
     } catch(e){ const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e); jobs.set(job.key,jj); active--; continue; }
+    const killer = setTimeout(() => { process.stderr.write('[job] TIMEOUT '+job.key+' >'+RENDER_TIMEOUT_MS+'ms — killing hung render to free the queue\n'); try { w.terminate(); } catch(e){} }, RENDER_TIMEOUT_MS);   // watchdog: a hung render is force-killed -> its exit triggers the retry-at-lower-res path
     w.on('message', m => { const jj = jobs.get(job.key) || {};
       if (m.ok){ jj.status='done'; jj.traits=m.traits; process.stderr.write('[job] done '+job.key+'\n'); }
       else { jj.status='error'; jj.error=m.error; process.stderr.write('[job] error '+job.key+' '+m.error+'\n'); }
       jobs.set(job.key, jj); });
     w.on('error', e => { const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e&&e.message||e); jobs.set(job.key,jj); process.stderr.write('[job] worker error '+job.key+' '+e+'\n'); });
-    w.on('exit', (code) => { const jj=jobs.get(job.key)||{};
-      if (code!==0 && jj.status!=='done' && jj.status!=='error' && !isReady(job.key)){   // worker died mid-render (almost always OOM at 4K)
+    w.on('exit', (code) => { clearTimeout(killer); const jj=jobs.get(job.key)||{};
+      if (code!==0 && jj.status!=='done' && jj.status!=='error' && !isReady(job.key)){   // worker died mid-render (OOM at 4K) or was killed by the watchdog (hung)
         const tries = (job.tries||0) + 1;
         if (tries <= 2){                                         // RETRY at lower resolution so the visitor still gets a pebble (a bit smaller) instead of an error
           const h2 = Math.max(1600, Math.round(job.h * 0.75));
