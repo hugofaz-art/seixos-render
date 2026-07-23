@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { Worker } = require('worker_threads');
+const { fork } = require('child_process');   // render each job in a short-lived CHILD PROCESS (was worker_threads) so the OS reclaims all memory per render — fixes memory-creep OOM
 
 const PORT      = process.env.PORT || 3000;
 const DEFAULT_H = parseInt(process.env.RENDER_H || '3840', 10);
@@ -46,12 +46,12 @@ function pump(){
     process.stderr.write('[job] start '+job.key+' h='+job.h+' (active='+active+')\n');
     let w;
     try {
-      w = new Worker(path.join(__dirname,'worker.js'), {
-        workerData:{ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq, createdAt:job.createdAt, mint:job.mint },
-        resourceLimits:{ maxOldGenerationSizeMb: HEAP_MB }   // worker threads reject --expose-gc execArgv; engine's gc() is optional (guarded)
+      w = fork(path.join(__dirname,'worker.js'), [], {
+        execArgv:['--max-old-space-size='+HEAP_MB, '--expose-gc']   // child_process (unlike worker_threads) accepts --expose-gc, so the engine's GC runs; the child EXITS after the render, returning all memory to the OS
       });
+      w.send({ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq, createdAt:job.createdAt, mint:job.mint });
     } catch(e){ const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e); jobs.set(job.key,jj); active--; continue; }
-    const killer = setTimeout(() => { process.stderr.write('[job] TIMEOUT '+job.key+' >'+RENDER_TIMEOUT_MS+'ms — killing hung render to free the queue\n'); try { w.terminate(); } catch(e){} }, RENDER_TIMEOUT_MS);   // watchdog: a hung render is force-killed -> its exit triggers the retry-at-lower-res path
+    const killer = setTimeout(() => { process.stderr.write('[job] TIMEOUT '+job.key+' >'+RENDER_TIMEOUT_MS+'ms — killing hung render to free the queue\n'); try { w.kill('SIGKILL'); } catch(e){} }, RENDER_TIMEOUT_MS);   // watchdog: a hung render is force-killed -> its non-zero exit triggers the retry-at-lower-res path
     w.on('message', m => { const jj = jobs.get(job.key) || {};
       if (m.ok){ jj.status='done'; jj.traits=m.traits; process.stderr.write('[job] done '+job.key+'\n'); }
       else { jj.status='error'; jj.error=m.error; process.stderr.write('[job] error '+job.key+' '+m.error+'\n'); }

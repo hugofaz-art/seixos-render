@@ -1,17 +1,18 @@
-// Worker thread: runs ONE heavy Pebbles render off the main event loop, writes the JPEG, then exits.
-// Keeps the HTTP server responsive (health/img/view/status keep answering) during the ~1-2 min 4K render.
-const { parentPort, workerData } = require('worker_threads');
+// Render CHILD PROCESS: the server FORKS one of these per job (child_process.fork). It runs ONE heavy
+// Pebbles render, writes the JPEG, delivers the result, then EXITS. Because each render runs in its own
+// short-lived OS process, the operating system reclaims ALL of its memory on exit — including the large
+// NATIVE (off-heap) buffers @napi-rs/canvas allocates at 4K. That makes memory-creep across renders
+// impossible (the old worker_threads model kept those natives in the single shared server process, which
+// crept upward over days until it OOM'd). Concurrency is still 1 (the server only forks one at a time).
 const fs = require('fs');
 const path = require('path');
-// Enable manual GC inside the worker. @napi-rs/canvas holds large NATIVE (off-heap) buffers per transient canvas;
-// the engine makes many per frame at 4K. Without forced GC those natives pile up and OOM the instance.
-// worker_threads reject --expose-gc in execArgv, but this runtime trick exposes global.gc anyway, so the
-// engine's periodic global.gc() calls actually run and keep peak RSS down.
-try { require('v8').setFlagsFromString('--expose-gc'); global.gc = require('vm').runInNewContext('gc'); } catch (e) {}
+// The parent passes --expose-gc in execArgv, so global.gc() exists here and the engine's periodic GC keeps
+// the peak memory of a SINGLE render down (a heavy 4K render must still fit in RAM by itself).
 const { render } = require('./engine');
 
-(async () => {
-  const { hash, genome, h, key, storeDir, quality, seq, createdAt, mint } = workerData;
+process.on('message', async (job) => {
+  const { hash, genome, h, key, storeDir, quality, seq, createdAt, mint } = job;
+  let out;
   try {
     const r = await render(hash, genome, h, 1.294, mint || 'MemeMaxis');
     if (!r || !r.canvas) throw new Error('render produced no canvas');
@@ -20,8 +21,12 @@ const { render } = require('./engine');
     fs.writeFileSync(tmp, buf);
     fs.renameSync(tmp, path.join(storeDir, key));            // atomic: file only appears complete
     try { fs.writeFileSync(path.join(storeDir, key + '.json'), JSON.stringify({ traits: r.traits, w: r.w, h: r.hgt, seq: seq, createdAt: createdAt })); } catch (e) {}
-    parentPort.postMessage({ ok: true, traits: r.traits, w: r.w, h: r.hgt, bytes: buf.length });
+    out = { ok: true, traits: r.traits, w: r.w, h: r.hgt, bytes: buf.length };
   } catch (e) {
-    parentPort.postMessage({ ok: false, error: String(e && e.message || e) });
+    out = { ok: false, error: String(e && e.message || e) };
   }
-})();
+  // send the result, THEN exit (in the flush callback) so the parent reliably gets the message before the
+  // process dies and the OS frees every byte this render used.
+  try { process.send(out, () => process.exit(0)); }
+  catch (e) { process.exit(0); }
+});
