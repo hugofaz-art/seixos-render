@@ -49,7 +49,7 @@ function pump(){
       w = fork(path.join(__dirname,'worker.js'), [], {
         execArgv:['--max-old-space-size='+HEAP_MB, '--expose-gc']   // child_process (unlike worker_threads) accepts --expose-gc, so the engine's GC runs; the child EXITS after the render, returning all memory to the OS
       });
-      w.send({ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq, createdAt:job.createdAt, mint:job.mint });
+      w.send({ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq, createdAt:job.createdAt, mint:job.mint, progressive:!!job.progressive });
     } catch(e){ const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e); jobs.set(job.key,jj); active--; continue; }
     const killer = setTimeout(() => { process.stderr.write('[job] TIMEOUT '+job.key+' >'+RENDER_TIMEOUT_MS+'ms — killing hung render to free the queue\n'); try { w.kill('SIGKILL'); } catch(e){} }, RENDER_TIMEOUT_MS);   // watchdog: a hung render is force-killed -> its non-zero exit triggers the retry-at-lower-res path
     w.on('message', m => { const jj = jobs.get(job.key) || {};
@@ -58,16 +58,15 @@ function pump(){
       jobs.set(job.key, jj); });
     w.on('error', e => { const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e&&e.message||e); jobs.set(job.key,jj); process.stderr.write('[job] worker error '+job.key+' '+e+'\n'); });
     w.on('exit', (code) => { clearTimeout(killer); const jj=jobs.get(job.key)||{};
-      if (code!==0 && jj.status!=='done' && jj.status!=='error' && !isReady(job.key)){   // worker died mid-render (OOM at 4K) or was killed by the watchdog (hung)
+      if (code!==0 && jj.status!=='done' && jj.status!=='error' && !isReady(job.key)){   // worker died mid-render — almost always the watchdog killing a HUNG render (rss stays ~72MB, so it's a CPU infinite-loop in the on-chain STATIC render for this genome+hash, NOT memory/OOM)
         const tries = (job.tries||0) + 1;
-        if (tries <= 2){                                         // RETRY at lower resolution so the visitor still gets a pebble (a bit smaller) instead of an error
-          const h2 = Math.max(1600, Math.round(job.h * 0.75));
+        if (tries <= 2){                                         // RETRY in PROGRESSIVE mode (same as the iPad, which renders these fine). The on-chain STATIC path infinite-loops for this genome; the PROGRESSIVE path doesn't. Same hash+genome -> the EXACT pebble the visitor saw, full 4K. Only failing renders take this path; the fast static path is unchanged for everyone else.
           jj.status='rendering'; jobs.set(job.key, jj);
-          queue.unshift({ key:job.key, hash:job.hash, genome:job.genome, h:h2, seq:job.seq, createdAt:job.createdAt, mint:job.mint, tries });
-          process.stderr.write('[job] OOM -> retry '+job.key+' at h='+h2+' (try '+tries+')\n');
+          queue.unshift({ key:job.key, hash:job.hash, genome:job.genome, h:job.h, seq:job.seq, createdAt:job.createdAt, mint:job.mint, tries, progressive:true });
+          process.stderr.write('[job] retry '+job.key+' in PROGRESSIVE mode (try '+tries+')\n');
         } else {
-          jj.status='error'; jj.error='render failed after retries (memory)'; jobs.set(job.key, jj);
-          process.stderr.write('[job] CRASH '+job.key+' gave up after '+tries+' tries\n');
+          jj.status='error'; jj.error='render failed after '+tries+' tries'; jobs.set(job.key, jj);
+          process.stderr.write('[job] FAILED '+job.key+' gave up after '+tries+' tries\n');
         }
       }
       active--; pump(); });

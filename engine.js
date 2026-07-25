@@ -7,7 +7,7 @@ const RAW = fs.readFileSync(__dirname + '/pebbles_script.js', 'utf8');
 function patch(s){
   s = s.replace(/^let hash='[^']*'/, "let hash=window.__SEED__");
   s = s.replace(",d=1.294,", ",d=window.__ASPECT__,");
-  s = s.replace('t.get("render_static")', '"true"');                          // STATIC synchronous render — no per-frame rAF accumulation (no watchdog server-side). Avoids the progressive-mode memory leak.
+  s = s.replace('t.get("render_static")', '(window.__PROGRESSIVE__?"false":"true")');   // STATIC by default (fast, synchronous). Some genomes infinite-loop in the static path (the iPad renders them fine because it uses PROGRESSIVE); a stuck render is retried with __PROGRESSIVE__=true, which drains via rAF (engine loop below) and completes. Memory is bounded by per-64-frame GC + the child-process exiting after each render.
   s = s.replace('l&&M.putImageData(W,0,0),console.log("done")', 'M.putImageData(W,0,0),console.log("done")');
   s = s.replace('t.get("height")', 'String(window.__H__||0)');
   s = s.replace("function o(){return i^=i<<13,i^=i>>17,i^=i<<5,(i<0?1+~i:i)%1e3/1e3}",
@@ -58,13 +58,14 @@ const FN = new Function(PATCHED);   // compiled once
 // Render one pebble. genome = {1:..,2:..,...}; hash = '0x...'; h = target height px.
 // async: yields to the event loop periodically so a long render never blocks the server (health checks keep passing)
 // and forced GC can run, keeping peak RSS down. Logs rss to stderr for diagnosis.
-async function render(hash, genome, h, aspect=1.294, mint='MemeMaxis'){
+async function render(hash, genome, h, aspect=1.294, mint='MemeMaxis', progressive=false){
   RAF = []; MAIN = null; lastCanvas = null;
   window.__SEED__ = hash;
   window.__FORCED__ = genome;
   window.__ASPECT__ = aspect;
   window.__H__ = h;
   window.__MINT__ = mint || 'MemeMaxis';
+  window.__PROGRESSIVE__ = !!progressive;   // false = fast static render (default); true = progressive rAF path (used on retry to escape static-path infinite loops)
   window.__OC__ = 0;
   window.__TRAITS__ = null;
   let done = false;

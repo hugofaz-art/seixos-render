@@ -11,10 +11,10 @@ const path = require('path');
 const { render } = require('./engine');
 
 process.on('message', async (job) => {
-  const { hash, genome, h, key, storeDir, quality, seq, createdAt, mint } = job;
+  const { hash, genome, h, key, storeDir, quality, seq, createdAt, mint, progressive } = job;
   let out;
   try {
-    const r = await render(hash, genome, h, 1.294, mint || 'MemeMaxis');
+    const r = await render(hash, genome, h, 1.294, mint || 'MemeMaxis', !!progressive);
     if (!r || !r.canvas) throw new Error('render produced no canvas');
     const buf = await r.canvas.encode('jpeg', Math.round((quality || 0.92) * 100));
     const tmp = path.join(storeDir, key + '.tmp');
