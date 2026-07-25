@@ -110,6 +110,11 @@ function fileNameFor(key){
 const COUNTER_FILE = path.join(STORE, 'counter.txt');
 // PRIVATE visitor log (e-mails). Starts with '_' so /img can't serve it (sanitize strips '_') and /list ignores it (.jpg only). NÃO exposto publicamente.
 const VISITORS_FILE = path.join(STORE, '_visitors.jsonl');
+// PRIVATE recovery log: every render request AND every e-mail request, persisted the INSTANT it arrives (before the render runs).
+// So if a render fails, we still have {hash,genome,mint} to re-render the EXACT pebble, and (for e-mail requests) the address to resend to.
+// '_' prefix -> not served by /img and skipped by the TTL cleanup + /list. Exported only via token.
+const RENDERS_FILE = path.join(STORE, '_renders.jsonl');
+function logRec(rec){ try { fs.appendFileSync(RENDERS_FILE, JSON.stringify(Object.assign({ ts:new Date().toISOString() }, rec))+'\n'); } catch(e){} }
 let seqCounter = (()=>{ try { return parseInt(fs.readFileSync(COUNTER_FILE,'utf8'),10) || 0; } catch(e){ return 0; } })();
 function nextSeq(){ seqCounter++; try { fs.writeFileSync(COUNTER_FILE, String(seqCounter)); } catch(e){} return seqCounter; }
 
@@ -249,6 +254,12 @@ const server = http.createServer(async (req, res) => {
     cors(res); res.writeHead(200, {'content-type':'text/csv; charset=utf-8'}); return res.end('\ufeff'+rows.join('\n'));
   }
 
+  if (u.pathname === '/renders.jsonl') {                              // PROTECTED recovery export (token) \u2014 every render + e-mail request incl. the ones whose render FAILED
+    if (!ADMIN_TOKEN || u.searchParams.get('token') !== ADMIN_TOKEN) { cors(res); res.writeHead(403); return res.end('forbidden'); }
+    let lines=[]; try { lines = fs.readFileSync(RENDERS_FILE,'utf8').split('\n').filter(Boolean); } catch(e){}
+    cors(res); res.writeHead(200,{'content-type':'application/x-ndjson; charset=utf-8'}); return res.end(lines.join('\n'));
+  }
+
   if (u.pathname === '/list') {                                       // archive listing for the local pull script
     let files = []; try { files = fs.readdirSync(STORE).filter(f => /\.jpg$/.test(f)); } catch(e){}
     if (u.searchParams.get('format') === 'json') {
@@ -289,6 +300,7 @@ const server = http.createServer(async (req, res) => {
       const H = Math.max(200, Math.min(parseInt(b.h || DEFAULT_H, 10), MAX_H));
       const key = crypto.randomBytes(8).toString('hex') + '.jpg';
       startJob(key, b.hash, b.genome, H, b.mint);                            // returns immediately; render runs in a worker (mint gates special palettes)
+      logRec({ type:'render', key, hash:b.hash, genome:b.genome, mint:b.mint||'MemeMaxis', h:H });   // recovery: persist the pebble's params NOW, before it renders
       const base = baseUrl(req);
       return json(res, 202, { key, url: base+'/img/'+key, viewUrl: base+'/view/'+key, statusUrl: base+'/status/'+key, status:'rendering', h:H });
     } catch (e) { return json(res, 500, { error: String(e && e.message || e) }); }
@@ -303,6 +315,7 @@ const server = http.createServer(async (req, res) => {
         if (!b.hash || !b.genome) return json(res, 400, { error:'key OR (hash+genome) required' });
         key = crypto.randomBytes(8).toString('hex') + '.jpg'; startJob(key, b.hash, b.genome, Math.max(200, Math.min(parseInt(b.h||DEFAULT_H,10), MAX_H)), b.mint);
       }
+      logRec({ type:'email', key, email:b.to, hash:b.hash||null, genome:b.genome||null, mint:b.mint||'MemeMaxis', lang:b.lang||null });   // recovery: capture the address + params BEFORE the render wait — so if the render fails we can still re-render and resend
       await waitForKey(key, 240000);                                         // wait up to 4 min for the render to finish
       const base = baseUrl(req);
       const content = fs.readFileSync(path.join(STORE, key)).toString('base64');
