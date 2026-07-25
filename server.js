@@ -51,7 +51,8 @@ function pump(){
       });
       w.send({ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq, createdAt:job.createdAt, mint:job.mint, progressive:!!job.progressive });
     } catch(e){ const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e); jobs.set(job.key,jj); active--; continue; }
-    const killer = setTimeout(() => { process.stderr.write('[job] TIMEOUT '+job.key+' >'+RENDER_TIMEOUT_MS+'ms — killing hung render to free the queue\n'); try { w.kill('SIGKILL'); } catch(e){} }, RENDER_TIMEOUT_MS);   // watchdog: a hung render is force-killed -> its non-zero exit triggers the retry-at-lower-res path
+    const budget = job.progressive ? RENDER_TIMEOUT_MS*2 : RENDER_TIMEOUT_MS;   // static hang-detection stays tight (180s -> fail fast, retry). Progressive retries render frame-by-frame (slower but they actually PROGRESS), so give them 2x to finish.
+    const killer = setTimeout(() => { process.stderr.write('[job] TIMEOUT '+job.key+' >'+budget+'ms — killing render to free the queue\n'); try { w.kill('SIGKILL'); } catch(e){} }, budget);   // watchdog: a stuck render is force-killed -> its non-zero exit triggers the retry (in progressive mode)
     w.on('message', m => { const jj = jobs.get(job.key) || {};
       if (m.ok){ jj.status='done'; jj.traits=m.traits; process.stderr.write('[job] done '+job.key+'\n'); }
       else { jj.status='error'; jj.error=m.error; process.stderr.write('[job] error '+job.key+' '+m.error+'\n'); }
