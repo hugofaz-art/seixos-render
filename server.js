@@ -20,7 +20,7 @@ const FROM_EMAIL= process.env.FROM_EMAIL || 'Seixos <onboarding@resend.dev>';
 const TTL_HOURS = parseInt(process.env.TTL_HOURS || '0', 10);          // 0 = keep forever (archive)
 const MAX_CONC  = parseInt(process.env.MAX_CONCURRENT || '1', 10);     // parallel renders (each ~6-9GB at 4K). 1 = safe on 16GB; bump via env if needed.
 const HEAP_MB   = parseInt(process.env.WORKER_HEAP_MB || '7000', 10);  // V8 heap cap per render worker (4K needs a lot)
-const RENDER_TIMEOUT_MS = parseInt(process.env.RENDER_TIMEOUT_MS || '180000', 10);  // kill a render that runs longer than this — a HUNG render must never hold the single slot and freeze the whole queue (a normal 4K render is ~1-2 min). On kill, the retry re-runs it at lower res.
+const RENDER_TIMEOUT_MS = parseInt(process.env.RENDER_TIMEOUT_MS || '180000', 10);  // kill a render that runs longer than this — a HUNG render must never hold the single slot and freeze the whole queue (a normal render is 114-131s at h=2796). NOTE: this is only a ~1.4x margin over normal, so it may be shooting slow-but-healthy renders; unproven either way, left alone deliberately so the RENDER_H experiment isn't confounded.
 
 fs.mkdirSync(STORE, { recursive: true });
 if (TTL_HOURS > 0) setInterval(() => { try { const now = Date.now(), ttl = TTL_HOURS*3600*1000;
@@ -51,24 +51,30 @@ function pump(){
       });
       w.send({ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq, createdAt:job.createdAt, mint:job.mint, progressive:!!job.progressive });
     } catch(e){ const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e); jobs.set(job.key,jj); active--; continue; }
-    const budget = job.progressive ? RENDER_TIMEOUT_MS*2 : RENDER_TIMEOUT_MS;   // static hang-detection stays tight (180s -> fail fast, retry). Progressive retries render frame-by-frame (slower but they actually PROGRESS), so give them 2x to finish.
-    const killer = setTimeout(() => { process.stderr.write('[job] TIMEOUT '+job.key+' >'+budget+'ms — killing render to free the queue\n'); try { w.kill('SIGKILL'); } catch(e){} }, budget);   // watchdog: a stuck render is force-killed -> its non-zero exit triggers the retry (in progressive mode)
+    const budget = job.progressive ? RENDER_TIMEOUT_MS*2 : RENDER_TIMEOUT_MS;   // nothing sets job.progressive any more (the rescue was removed 16 Aug), so this is always RENDER_TIMEOUT_MS. The branch is left in place because engine.js still supports the progressive path and we may yet want it.
+    const killer = setTimeout(() => { process.stderr.write('[job] TIMEOUT '+job.key+' >'+budget+'ms — killing render to free the queue\n'); try { w.kill('SIGKILL'); } catch(e){} }, budget);   // watchdog: a stuck render is force-killed so it cannot hold the single slot. Its non-zero exit now marks the job failed instead of re-queueing it.
     w.on('message', m => { const jj = jobs.get(job.key) || {};
       if (m.ok){ jj.status='done'; jj.traits=m.traits; process.stderr.write('[job] done '+job.key+'\n'); }
       else { jj.status='error'; jj.error=m.error; process.stderr.write('[job] error '+job.key+' '+m.error+'\n'); }
       jobs.set(job.key, jj); });
     w.on('error', e => { const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e&&e.message||e); jobs.set(job.key,jj); process.stderr.write('[job] worker error '+job.key+' '+e+'\n'); });
     w.on('exit', (code) => { clearTimeout(killer); const jj=jobs.get(job.key)||{};
-      if (code!==0 && jj.status!=='done' && jj.status!=='error' && !isReady(job.key)){   // worker died mid-render — almost always the watchdog killing a HUNG render (rss stays ~72MB, so it's a CPU infinite-loop in the on-chain STATIC render for this genome+hash, NOT memory/OOM)
-        const tries = (job.tries||0) + 1;
-        if (tries <= 2){                                         // RETRY in PROGRESSIVE mode (same as the iPad, which renders these fine). The on-chain STATIC path infinite-loops for this genome; the PROGRESSIVE path doesn't. Same hash+genome -> the EXACT pebble the visitor saw, full 4K. Only failing renders take this path; the fast static path is unchanged for everyone else.
-          jj.status='rendering'; jobs.set(job.key, jj);
-          queue.unshift({ key:job.key, hash:job.hash, genome:job.genome, h:job.h, seq:job.seq, createdAt:job.createdAt, mint:job.mint, tries, progressive:true });
-          process.stderr.write('[job] retry '+job.key+' in PROGRESSIVE mode (try '+tries+')\n');
-        } else {
-          jj.status='error'; jj.error='render failed after '+tries+' tries'; jobs.set(job.key, jj);
-          process.stderr.write('[job] FAILED '+job.key+' gave up after '+tries+' tries\n');
-        }
+      if (code!==0 && jj.status!=='done' && jj.status!=='error' && !isReady(job.key)){   // worker died mid-render. MEASURED (16 Aug) across 11 logged failures: 6 died of MEMORY before the watchdog, 5 hit it. Render's own event says "Ran out of memory (used over 16GB)"; the memory graph shows each render as an isolated 2-15GB spike against a 16GB limit, with NO creep between renders. So the ceiling is capacity, not a leak.
+        // THE PROGRESSIVE RESCUE IS GONE (16 Aug). It was added 25 Jul to escape a supposed infinite loop
+        // in the static path. Measured over the 7 days to 15 Aug it fired 17 times and produced ZERO
+        // pebbles — every attempt died after 18-24s of its 360s budget (it allocates ~23MB per frame, a
+        // full-size canvas per frame, and walks off the 16GB ceiling in about twenty seconds). Worse, on
+        // 8-9 Aug it took the WHOLE INSTANCE down nine times ("Ran out of memory (used over 16GB)"), and an
+        // instance death kills every OTHER visitor's in-flight render too, not just this one. So it never
+        // saved a single visitor and it cost bystanders. Failing straight away is strictly better: the
+        // visitor sees the honest error ~40s sooner and the queue keeps moving for everyone behind them.
+        // The engine still SUPPORTS progressive (engine.js window.__PROGRESSIVE__) — it is simply no longer
+        // used as a rescue. What actually fails renders is memory: Render's own event log says
+        // "Ran out of memory (used over 16GB)", and the memory graph shows every render as an isolated
+        // 2-15GB spike against a 16GB limit, with NO creep between renders. Whether that is fixable by
+        // lowering RENDER_H is still open and is being measured separately.
+        jj.status='error'; jj.error='render failed'; jobs.set(job.key, jj);
+        process.stderr.write('[job] FAILED '+job.key+' — render process died (exit code '+code+')\n');
       }
       active--; pump(); });
   }
