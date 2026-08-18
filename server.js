@@ -33,10 +33,26 @@ if (TTL_HOURS > 0) setInterval(() => { try { const now = Date.now(), ttl = TTL_H
 // ---- async render queue ----
 const jobs = new Map();                 // key -> { status:'queued'|'rendering'|'done'|'error', error, traits, ts }
 const queue = []; let active = 0;
+// PILE-UP GUARD (16 Aug). A visitor whose render is slow gets told it failed (/email gives up at 4 min,
+// /view at 5) and taps again - but the first render is usually still going. With MAX_CONC=1 each retry
+// lands BEHIND it, so the queue grows, more visitors cross the give-up line, and they retry too. That
+// loop is why waits reached 429s against a 130s median. Identical work is now COLLAPSED: a repeat of a
+// pebble already queued or rendering returns the SAME key, so the visitor re-attaches to the render
+// already in flight instead of starting a second one.
+const inflight = new Map();             // fingerprint -> key, only while queued/rendering
+function fingerprint(hash, genome, h, mint){ return String(hash)+'|'+JSON.stringify(genome||null)+'|'+h+'|'+(mint||'MemeMaxis'); }
+function inflightKey(hash, genome, h, mint){
+  const f = fingerprint(hash, genome, h, mint), k = inflight.get(f);
+  if (!k) return null;
+  const j = jobs.get(k);
+  if (j && (j.status === 'queued' || j.status === 'rendering')) return k;   // still going -> reuse it
+  inflight.delete(f); return null;                                          // finished/failed -> let a fresh one run
+}
 function startJob(key, hash, genome, h, mint){
   const seq = nextSeq();                                 // sequential number for this generated Seixo (used in the filename)
   const createdAt = new Date().toISOString();            // generation timestamp (UTC, ISO 8601)
   jobs.set(key, { status:'queued', ts:Date.now(), seq, createdAt });
+  inflight.set(fingerprint(hash, genome, h, mint), key);            // so a retry of the same pebble re-attaches instead of queueing again
   queue.push({ key, hash, genome, h, seq, createdAt, mint: mint || 'MemeMaxis' }); pump();
 }
 function pump(){
@@ -76,6 +92,7 @@ function pump(){
         jj.status='error'; jj.error='render failed'; jobs.set(job.key, jj);
         process.stderr.write('[job] FAILED '+job.key+' — render process died (exit code '+code+')\n');
       }
+      inflight.delete(fingerprint(job.hash, job.genome, job.h, job.mint));   // job is over (done or failed) - stop collapsing onto it
       active--; pump(); });
   }
 }
@@ -177,7 +194,7 @@ function reveal(){ peb.onload=function(){ prep.style.display='none'; peb.style.d
 var pollStart=Date.now();
 function poll(){ fetch(STATUS,{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
   if(j.ready){ if(j.filename) NAME=j.filename; reveal(); }
-  else if(j.status==='error' || (j.status==='unknown'&&Date.now()-pollStart>15000) || Date.now()-pollStart>300000){ prep.innerHTML=S.err; }   // failed, lost (server restarted), or stuck >5min -> stop the forever-spinner and tell the visitor
+  else if(j.status==='error' || (j.status==='unknown'&&Date.now()-pollStart>15000) || Date.now()-pollStart>660000){ prep.innerHTML=S.err; }   // failed, lost (server restarted), or stuck >11min. Was 5min, which declared failure on renders that were still healthily working (observed tail 429s) - the status 'error' branch above is the REAL signal; this wall-clock is only a backstop for a lost job.
   else { prep.innerHTML = (j.ahead>0) ? ('<div class="spin"></div>'+S.queue(j.ahead)) : null; if(!(j.ahead>0)) setPrep(); setTimeout(poll, 2500); }
 }).catch(function(){ setTimeout(poll, 3500); }); }
 poll();
@@ -304,6 +321,10 @@ const server = http.createServer(async (req, res) => {
     try { const b = await readBody(req);
       if (!b.hash || !b.genome) return json(res, 400, { error:'hash and genome required' });
       const H = Math.max(200, Math.min(parseInt(b.h || DEFAULT_H, 10), MAX_H));
+      const already = inflightKey(b.hash, b.genome, H, b.mint);      // same pebble already rendering? re-attach, don't pile up
+      if (already) { const base0 = baseUrl(req);
+        process.stderr.write('[job] collapse duplicate onto '+already+'\n');
+        return json(res, 202, { key: already, url: base0+'/img/'+already, viewUrl: base0+'/view/'+already, statusUrl: base0+'/status/'+already, status:'rendering', h:H }); }
       const key = crypto.randomBytes(8).toString('hex') + '.jpg';
       startJob(key, b.hash, b.genome, H, b.mint);                            // returns immediately; render runs in a worker (mint gates special palettes)
       logRec({ type:'render', key, hash:b.hash, genome:b.genome, mint:b.mint||'MemeMaxis', h:H });   // recovery: persist the pebble's params NOW, before it renders
@@ -319,10 +340,12 @@ const server = http.createServer(async (req, res) => {
       let key = sanitize(b.key);
       if (!key || (!isReady(key) && !jobs.get(key))) {                        // no key (or unknown) -> render now
         if (!b.hash || !b.genome) return json(res, 400, { error:'key OR (hash+genome) required' });
-        key = crypto.randomBytes(8).toString('hex') + '.jpg'; startJob(key, b.hash, b.genome, Math.max(200, Math.min(parseInt(b.h||DEFAULT_H,10), MAX_H)), b.mint);
+        const H2 = Math.max(200, Math.min(parseInt(b.h||DEFAULT_H,10), MAX_H));
+        key = inflightKey(b.hash, b.genome, H2, b.mint) || (crypto.randomBytes(8).toString('hex') + '.jpg');
+        if (!jobs.get(key)) startJob(key, b.hash, b.genome, H2, b.mint);
       }
       logRec({ type:'email', key, email:b.to, hash:b.hash||null, genome:b.genome||null, mint:b.mint||'MemeMaxis', lang:b.lang||null });   // recovery: capture the address + params BEFORE the render wait — so if the render fails we can still re-render and resend
-      await waitForKey(key, 240000);                                         // wait up to 4 min for the render to finish
+      await waitForKey(key, 600000);                                         // MEASURED 16 Aug: median render+queue is 130s but the tail reaches 429s. The old 4-min cap was ABANDONING renders that then finished correctly and sat in the archive while the visitor had been told it failed (7 of 71 pebbles). 10 min covers the observed tail.
       const base = baseUrl(req);
       const content = fs.readFileSync(path.join(STORE, key)).toString('base64');
       const r = await fetch('https://api.resend.com/emails', { method:'POST',

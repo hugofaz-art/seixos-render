@@ -74,7 +74,11 @@ async function render(hash, genome, h, aspect=1.294, mint='MemeMaxis', progressi
   global.console.log = (m)=>{ if(m==='done') done=true; };
   const t0=Date.now();
   elog('start h='+h+' rss(MB)='+Math.round(process.memoryUsage().rss/1048576));
-  try { FN(); } catch(e){ /* progressive path schedules rAF; ignore sync throw */ }
+  // Only the PROGRESSIVE path may throw synchronously as a matter of course (it schedules rAF and
+  // unwinds). In STATIC mode a throw is a real mid-render failure and must NOT be hidden: swallowing
+  // it here is what produced ~68 KB background-only "successes" from 25 Jul onward (first seen at
+  // seq 602, the deploy's own test pebble). Let it propagate so worker.js reports the true error.
+  try { FN(); } catch(e){ if(!progressive){ global.console.log = prevLog; elog('STATIC THROW ' + (e && e.message)); throw e; } }
   let guard=0;
   while(RAF.length && !done && guard++ < 5_000_000){
     const cb=RAF.shift();
