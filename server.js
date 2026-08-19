@@ -63,7 +63,16 @@ function pump(){
     let w;
     try {
       w = fork(path.join(__dirname,'worker.js'), [], {
-        execArgv:['--max-old-space-size='+HEAP_MB, '--expose-gc']   // child_process (unlike worker_threads) accepts --expose-gc, so the engine's GC runs; the child EXITS after the render, returning all memory to the OS
+        execArgv:['--max-old-space-size='+HEAP_MB, '--expose-gc'],   // child_process (unlike worker_threads) accepts --expose-gc, so the engine's GC runs; the child EXITS after the render, returning all memory to the OS
+        // MALLOC_ARENA_MAX (18 Aug) — set on the CHILD, which is the process that actually allocates.
+        // On Linux, glibc hands each thread its own malloc arena and each arena keeps its own freed
+        // memory instead of returning it, so RSS inflates well beyond live data. That is the exact shape
+        // we measured: isolated 2-15GB spikes against a 16GB limit with NO leak and no creep, and a peak
+        // that moves +/-1.8GB between identical runs. @napi-rs/canvas is native and multithreaded, so it
+        // is a prime candidate. Capping the arenas trades a little allocator contention for a much
+        // tighter RSS. Untestable on macOS (different allocator) - this is a production experiment, and
+        // it is reversible by deleting these two lines.
+        env: Object.assign({}, process.env, { MALLOC_ARENA_MAX: process.env.MALLOC_ARENA_MAX || '2' })
       });
       w.send({ hash:job.hash, genome:job.genome, h:job.h, key:job.key, storeDir:STORE, quality:QUALITY, seq:job.seq, createdAt:job.createdAt, mint:job.mint, progressive:!!job.progressive });
     } catch(e){ const jj=jobs.get(job.key)||{}; jj.status='error'; jj.error=String(e); jobs.set(job.key,jj); active--; continue; }
@@ -89,8 +98,23 @@ function pump(){
         // "Ran out of memory (used over 16GB)", and the memory graph shows every render as an isolated
         // 2-15GB spike against a 16GB limit, with NO creep between renders. Whether that is fixable by
         // lowering RENDER_H is still open and is being measured separately.
+        // ONE PLAIN RETRY, SAME RESOLUTION (18 Aug). Two swap-controlled runs of IDENTICAL work peaked at
+        // 5.74 GB and 7.53 GB - the algorithm's own demand swings ~1.8 GB run to run. Against a 16 GB
+        // ceiling where production spikes reach 15 GB, that variance alone decides whether a marginal
+        // pebble lives or dies, so the same pebble that just failed has a real chance on a second roll.
+        // NOT a lower resolution: measured, cutting 44% of the pixels does not reduce peak memory at all
+        // (h=2796 -> 5.74/7.53 GB, h=2097 -> 7.07/7.22 GB), which is why the §16 ladder failed in July.
+        // NOT progressive: 0 pebbles in 17 attempts. Just one more throw of the same dice. Safe from
+        // pile-up because the de-dupe above collapses the visitor's own retries onto this job.
+        const tries = (job.tries||0) + 1;
+        if (tries <= 1){
+          jj.status='rendering'; jobs.set(job.key, jj);
+          queue.unshift({ key:job.key, hash:job.hash, genome:job.genome, h:job.h, seq:job.seq, createdAt:job.createdAt, mint:job.mint, tries });
+          process.stderr.write('[job] retry '+job.key+' same res (try '+tries+') — first attempt died, memory demand varies ~1.8GB between runs\n');
+          active--; pump(); return;                                   // keep the inflight mapping: the job is NOT over
+        }
         jj.status='error'; jj.error='render failed'; jobs.set(job.key, jj);
-        process.stderr.write('[job] FAILED '+job.key+' — render process died (exit code '+code+')\n');
+        process.stderr.write('[job] FAILED '+job.key+' — died twice (exit code '+code+')\n');
       }
       inflight.delete(fingerprint(job.hash, job.genome, job.h, job.mint));   // job is over (done or failed) - stop collapsing onto it
       active--; pump(); });
