@@ -98,23 +98,15 @@ function pump(){
         // "Ran out of memory (used over 16GB)", and the memory graph shows every render as an isolated
         // 2-15GB spike against a 16GB limit, with NO creep between renders. Whether that is fixable by
         // lowering RENDER_H is still open and is being measured separately.
-        // ONE PLAIN RETRY, SAME RESOLUTION (18 Aug). Two swap-controlled runs of IDENTICAL work peaked at
-        // 5.74 GB and 7.53 GB - the algorithm's own demand swings ~1.8 GB run to run. Against a 16 GB
-        // ceiling where production spikes reach 15 GB, that variance alone decides whether a marginal
-        // pebble lives or dies, so the same pebble that just failed has a real chance on a second roll.
-        // NOT a lower resolution: measured, cutting 44% of the pixels does not reduce peak memory at all
-        // (h=2796 -> 5.74/7.53 GB, h=2097 -> 7.07/7.22 GB), which is why the §16 ladder failed in July.
-        // NOT progressive: 0 pebbles in 17 attempts. Just one more throw of the same dice. Safe from
-        // pile-up because the de-dupe above collapses the visitor's own retries onto this job.
-        const tries = (job.tries||0) + 1;
-        if (tries <= 1){
-          jj.status='rendering'; jobs.set(job.key, jj);
-          queue.unshift({ key:job.key, hash:job.hash, genome:job.genome, h:job.h, seq:job.seq, createdAt:job.createdAt, mint:job.mint, tries });
-          process.stderr.write('[job] retry '+job.key+' same res (try '+tries+') — first attempt died, memory demand varies ~1.8GB between runs\n');
-          active--; pump(); return;                                   // keep the inflight mapping: the job is NOT over
-        }
+        // NO RETRY (dropped 18 Aug, same day it was added). The idea was sound - identical work peaks at
+        // 5.74 GB and 7.53 GB, so a marginal pebble that lost the first roll could win a second - but the
+        // cost is asymmetric. A second attempt is a second walk to the 16 GB ceiling, and when that
+        // ceiling is hit hard enough Render kills the WHOLE INSTANCE, not just the render child. An
+        // instance death destroys every OTHER visitor's in-flight render too. So the retry gambles other
+        // people's pebbles to maybe save this one. Observed live: a recovery run of heavy pebbles took
+        // the service to HTTP 502 then 520 mid-run. One throw, honest error, queue keeps moving.
         jj.status='error'; jj.error='render failed'; jobs.set(job.key, jj);
-        process.stderr.write('[job] FAILED '+job.key+' — died twice (exit code '+code+')\n');
+        process.stderr.write('[job] FAILED '+job.key+' — render process died (exit code '+code+')\n');
       }
       inflight.delete(fingerprint(job.hash, job.genome, job.h, job.mint));   // job is over (done or failed) - stop collapsing onto it
       active--; pump(); });
