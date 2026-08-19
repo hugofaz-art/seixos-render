@@ -230,6 +230,10 @@ btn.addEventListener('click', async function(){ hint.textContent=S.preparing;
 </script></body></html>`;
 }
 
+// NOTE (18 Aug): the opening deliberately says "Você gerou" / "You generated", NOT "acabou de gerar" /
+// "just generated". The same template is used to RE-SEND pebbles whose original render failed, sometimes
+// weeks later (see recover-all.js), and telling someone they *just* made something three weeks after
+// their visit reads as careless - especially to a visitor we already failed once. Keep it tenseless.
 function emailHtml(base, key, traits, lang){
   const EN = lang==='en';
   const img = base+'/img/'+key;
@@ -240,7 +244,7 @@ function emailHtml(base, key, traits, lang){
       : [pal?('paleta '+pal):'', sz?('tamanho '+sz):''].filter(Boolean).join(', ')) + ')') : '';
   const t = EN ? {
     h1:'Your Pebble has arrived 🪨',
-    p1:`Thank you for visiting the <strong>Domínio Público gallery</strong> at <strong>Casa NUA</strong> in Formosa, in the heart of São Paulo. You just generated a unique Pebble${detail} — it is attached to this e-mail in <strong>high resolution</strong>.`,
+    p1:`Thank you for visiting the <strong>Domínio Público gallery</strong> at <strong>Casa NUA</strong> in Formosa, in the heart of São Paulo. You generated a unique Pebble${detail} — it is attached to this e-mail in <strong>high resolution</strong>.`,
     h2a:'What you just created',
     p2:`<strong>Pebbles</strong> is a generative <strong>on-chain</strong> artwork by <strong>Zeblocks</strong>, in the <strong>public domain (CC0)</strong> — free for anyone to use, remix, print, and build upon, without asking permission. The algorithm that draws each Pebble lives on the Ethereum blockchain, and each combination is unique. The <strong>1,000 Pebbles</strong> you saw in the exhibition are the original NFTs, but the algorithm allows the creation of <strong>infinite</strong> new works like the one you just created, always unique!`,
     h2b:'About Casa NUA',
@@ -251,7 +255,7 @@ function emailHtml(base, key, traits, lang){
     imgAlt:'Your Pebble'
   } : {
     h1:'Seu Seixo chegou 🪨',
-    p1:`Obrigado por visitar a <strong>galeria Domínio Público</strong> da <strong>Casa NUA</strong> na Formosa, no coração de São Paulo. Você acabou de gerar um Seixo único${detail} — ele está em <strong>alta resolução</strong> em anexo neste e-mail.`,
+    p1:`Obrigado por visitar a <strong>galeria Domínio Público</strong> da <strong>Casa NUA</strong> na Formosa, no coração de São Paulo. Você gerou um Seixo único${detail} — ele está em <strong>alta resolução</strong> em anexo neste e-mail.`,
     h2a:'O que você acabou de criar',
     p2:`<strong>Seixos (Pebbles)</strong> é uma obra generativa <strong>on-chain</strong> de <strong>Zeblocks</strong>, em <strong>domínio público (CC0)</strong> — livre para qualquer pessoa usar, remixar, imprimir e construir em cima, sem pedir permissão. O algoritmo que desenha cada Seixo vive na blockchain Ethereum, e cada combinação é única. As <strong>1.000 Pebbles</strong> que você viu na exposição são os NFTs originais, mas o algoritmo permite a criação de <strong>infinitas</strong> novas obras como a que você acabou de criar, sempre únicas!`,
     h2b:'Sobre a Casa NUA',
